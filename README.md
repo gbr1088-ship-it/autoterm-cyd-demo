@@ -39,4 +39,7 @@ If you delete `src/logo.h`, the firmware falls back to a drawn stand-in logo.
 | Taps land in the wrong place | The serial monitor prints raw touch values; adjust `TOUCH_X/Y_MIN/MAX`. If an axis is reversed, swap that axis's MIN and MAX |
 
 ## Next step: a real heater
-Search for `HEATER LINK` in `main.cpp`. Those are the places where start, stop, mode and setpoint commands go. Autoterm heaters talk over a 2400 baud UART on the control-panel connector, so they can be wired to the CYD's spare UART pins (via the P1/CN1 header) through a level shifter.
+Search for `HEATER LINK` in `main.cpp`. Those are the places where start, stop, mode and setpoint commands go.
+
+Autoterm heaters (AIR 2D/4D) talk over a 5 V TTL UART on the control-panel harness at 9600 baud, 8N1. The community reverse-engineered the protocol: [schroeder-robert/autoterm-air-2d-serial-control](https://github.com/schroeder-robert/autoterm-air-2d-serial-control). Wire it to the CYD's CN1 header (TX = GPIO27, RX = GPIO22) through a 5 V ↔ 3.3 V level shifter. Never connect the harness's +12 V wire to a signal pin.
+
