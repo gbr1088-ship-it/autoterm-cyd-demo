@@ -12,22 +12,23 @@ This is a demo controller UI for an Autoterm (Planar) diesel heater. The heater 
    If the upload won't start, hold **BOOT** and tap **RST**.
 
 ## Screens
-- **Splash**: logo and a loading bar.
+- **Splash**: the Autoterm logo fades in, followed by a loading bar.
 - **Main**:
-  - Header: state and supply voltage.
-  - Left card: cabin temperature, fan rpm and heat output.
-  - Right card: the setpoint, with − / + buttons (hold to repeat).
-  - Modes: **TEMP** (1–30 °C), **POWER** (level 0–9), **VENT** (fan only, 1–9).
-  - **START / STOP** button, plus an animated flame or fan.
+  - Header: the small Autoterm logo, a coloured state pill and the supply voltage.
+  - Gauge: a curved cabin-temperature gauge that sweeps from blue to red. In TEMP mode it also shows a setpoint marker.
+  - Inside the gauge: the temperature, the setpoint, and an animated flame or fan. Fan rpm and heat output sit underneath.
+  - Buttons: + and − (hold to repeat), and a round power button that glows green when stopped, red when running and grey while cooling down.
+  - Mode switch: **TEMP** (1–30 °C), **POWER** (level 0–9) and **VENT** (fan only, 1–9).
 - States run OFF → STARTING (12 s glow plug) → HEATING → COOLING DOWN (10 s purge) → OFF.
 - The on-board RGB LED is red while heating and blue while ventilating or cooling down.
 
-## Using the real Autoterm logo
+## Logo
+`src/logo.h` is generated from the artwork in `assets/`, which was taken from Autoterm's logo PDF. To regenerate it, or to swap in other artwork:
 ```
 pip install pillow
-python tools/png2rgb565.py path/to/autoterm_logo.png
+python tools/png2rgb565.py assets/autoterm_logo.png --small-image assets/autoterm_logo_plain.png
 ```
-This writes `src/logo.h`, and the splash screen uses it automatically on the next build. Until then a drawn stand-in (flame + "AUTOTERM" wordmark) is shown.
+If you delete `src/logo.h`, the firmware falls back to a drawn stand-in logo.
 
 ## Troubleshooting
 | Symptom | Fix (in `platformio.ini` / `main.cpp`) |
