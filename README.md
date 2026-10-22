@@ -30,6 +30,17 @@ python tools/png2rgb565.py assets/autoterm_logo.png --small-image assets/autoter
 ```
 If you delete `src/logo.h`, the firmware falls back to a drawn stand-in logo.
 
+## Cabin temperature sensor (DS18B20)
+Plug a DS18B20 probe into the **CN1** header and the gauge shows the real temperature. With no probe connected, the temperature is simulated. The board checks for the probe every 5 s, so you can plug it in while it's running.
+
+```
+DS18B20 red    ──┬── 3.3V  (CN1)
+              [4.7kΩ]
+DS18B20 yellow ──┴── IO22  (CN1)
+DS18B20 black  ───── GND   (CN1)
+```
+The 4.7 kΩ resistor between data and 3.3V is required. Mount the probe away from the heater outlet and out of direct sun.
+
 ## Troubleshooting
 | Symptom | Fix (in `platformio.ini` / `main.cpp`) |
 |---|---|
@@ -41,5 +52,5 @@ If you delete `src/logo.h`, the firmware falls back to a drawn stand-in logo.
 ## Next step: a real heater
 Search for `HEATER LINK` in `main.cpp`. Those are the places where start, stop, mode and setpoint commands go.
 
-Autoterm heaters (AIR 2D/4D) talk over a 5 V TTL UART on the control-panel harness at 9600 baud, 8N1. The community reverse-engineered the protocol: [schroeder-robert/autoterm-air-2d-serial-control](https://github.com/schroeder-robert/autoterm-air-2d-serial-control). Wire it to the CYD's CN1 header (TX = GPIO27, RX = GPIO22) through a 5 V ↔ 3.3 V level shifter. Never connect the harness's +12 V wire to a signal pin.
+Autoterm heaters (AIR 2D/4D) talk over a 5 V TTL UART on the control-panel harness at 9600 baud, 8N1. The community reverse-engineered the protocol: [schroeder-robert/autoterm-air-2d-serial-control](https://github.com/schroeder-robert/autoterm-air-2d-serial-control). Wire it through a 5 V ↔ 3.3 V level shifter: TX = **GPIO27** (CN1) and RX = **GPIO35** (P3, input only, which suits a receive line). GPIO22 is taken by the temperature sensor. Never connect the harness's +12 V wire to a signal pin.
 

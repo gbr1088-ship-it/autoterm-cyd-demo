@@ -6,6 +6,7 @@ The README covers how to build and use the project. This file covers **where thi
 ## Status
 - **Working demo, tested on the real board.** It's flashed to an ESP32-2432S028 and runs well: splash, touch and the full UI.
 - **The heater is still simulated.** Nothing talks to a real Autoterm yet.
+- **DS18B20 cabin probe supported** on IO22. With no probe connected, the temperature is simulated. The code compiles, but it hasn't been tested with the user's probe yet.
 - **Redesigned UI and real logo.** The redesign added the arc gauge, the round power button and the pill mode selector, plus the real Autoterm logo. It compiles cleanly. *Confirm on the board that it looks right.*
 - **Repo:** `gbr1088-ship-it/autoterm-cyd-demo` (private). Pushes are done from the laptop.
 
@@ -15,8 +16,10 @@ The README covers how to build and use the project. This file covers **where thi
 | Display ILI9341 (HSPI) | MISO 12, MOSI 13, SCLK 14, CS 15, DC 2, BL 21 |
 | Touch XPT2046 (own VSPI bus) | CLK 25, MOSI 32, MISO 39, CS 33, IRQ 36 |
 | RGB LED (active LOW) | R 4, G 16, B 17 |
-| **Free for the heater UART** | **CN1 header: GND / IO22 / IO27 / 3.3V** |
-| Other free pins | IO35 (input only, on P3); IO1/IO3 are used by USB serial |
+| CN1 header | GND / IO22 / IO27 / 3.3V |
+| P3 header | GND / IO35 / IO22 / IO21 (IO21 = backlight, don't use) |
+| **Pin plan** | **IO22 = DS18B20 data, IO27 = heater TX, IO35 = heater RX** (input only, fine for RX) |
+| Not usable | IO1/IO3 (USB serial) |
 
 - Touch uses `XPT2046_Touchscreen`, not TFT_eSPI's touch, because it's on a separate SPI bus.
 - The backlight is driven by PWM (LEDC channel 0) for the fades.
@@ -27,6 +30,7 @@ The README covers how to build and use the project. This file covers **where thi
 - **Redraws:** `drawDynamic()` redraws only when a value changes.
 - **`HEATER LINK` comments:** these mark where real heater commands go, in `onPowerPressed`, `onModePressed` and `onAdjust`. `simulate()` is the part to replace with real status polling.
 - **Colours:** constants at the top. `C_RED` = Autoterm Pantone 185 red.
+- **Probe reading:** `pollSensor()` reads the DS18B20 without blocking. It starts a conversion and collects it a second later. It searches again every 5 s, and after 3 failed reads it falls back to the simulation. `simulate()` only changes `cabinTemp` while `sensorOk` is false.
 
 ## Logo
 - **Source:** Autoterm's logo/brand PDF (4 pages). Page 1 = logo with tagline, page 2 = logo without tagline.
@@ -35,10 +39,10 @@ The README covers how to build and use the project. This file covers **where thi
 - **Trademark:** the logo is Autoterm's. Fine on your own device; ask Autoterm before sharing or selling anything that uses it.
 
 ## Building
-1. **Normal:** PlatformIO (`pio run -t upload`). Versions are pinned: espressif32 6.9.0 (Arduino core 2.0.17), TFT_eSPI 2.5.43, XPT2046_Touchscreen 1.4.
+1. **Normal:** PlatformIO (`pio run -t upload`). Versions are pinned: espressif32 6.9.0 (Arduino core 2.0.17), TFT_eSPI 2.5.43, XPT2046_Touchscreen 1.4, OneWire 2.3.8, DallasTemperature 3.9.0.
 2. **If the PlatformIO registry is blocked** (it was in the cloud session): use arduino-cli 1.1.1 from GitHub releases.
    - Clone `espressif/arduino-esp32` at tag `2.0.17` into `<user>/hardware/espressif/esp32`, then run its `tools/get.py`.
-   - Clone the two libraries into `<user>/libraries`.
+   - Clone the four libraries (TFT_eSPI, XPT2046_Touchscreen, OneWire and DallasTemperature, at the versions above) into `<user>/libraries`. DallasTemperature lives at `milesburton/Arduino-Temperature-Control-Library`, tag `3.9.0`.
    - Put `main.cpp` in a sketch folder next to an empty `autoterm.ino`.
    - Pass the `-D` flags from `platformio.ini` via `--build-property compiler.cpp.extra_flags=...` (and `compiler.c.extra_flags`).
    - arduino-cli needs ctags, which wasn't downloadable. A stub script that just `exit 0`s works, passed via `runtime.tools.ctags.path`.
@@ -71,10 +75,10 @@ The README covers how to build and use the project. This file covers **where thi
 - spare Autoterm panel cable or connector
 - 1–2 A inline fuse
 - JST 1.25 mm 4-pin lead for CN1
-- optional DS18B20 cabin temperature sensor
+- DS18B20 cabin temperature probe (the user has one), with a 4.7 kΩ pull-up resistor
 
 **Wiring plan** (the CYD replaces the original panel):
-- **Data:** heater white (panel→heater) ← shifter ← GPIO27 (TX). Heater yellow (heater→panel) → shifter → GPIO22 (RX).
+- **Data:** heater white (panel→heater) ← shifter ← GPIO27 (TX). Heater yellow (heater→panel) → shifter → GPIO35 (RX).
 - **Ground:** shared with the heater. This is essential, or the data comes through as garbage.
 - **Red +12 V:** never connect it to a signal pin.
 - **Check first:** wire colours vary between models. Measure with a multimeter: the data lines idle at about 5 V, and the power wire reads 12 V.
