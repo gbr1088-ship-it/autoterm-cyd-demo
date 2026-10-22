@@ -339,7 +339,13 @@ void drawInfoLine() {
   infoSpr.fillSprite(C_BG);
   infoSpr.setTextDatum(MC_DATUM);
   infoSpr.setTextColor(C_DIM);
-  snprintf(buf, sizeof buf, "%d rpm   %d%%", (int)fanRpm, (int)(output * 100));
+  if (state == ST_OFF) {
+    // nothing to report from the heater, so show whether the probe is working
+    infoSpr.setTextColor(sensorOk ? C_GREEN : C_ORANGE);
+    snprintf(buf, sizeof buf, sensorOk ? "Probe OK" : "No probe (demo)");
+  } else {
+    snprintf(buf, sizeof buf, "%d rpm   %d%%", (int)fanRpm, (int)(output * 100));
+  }
   infoSpr.drawString(buf, infoSpr.width() / 2, 9, 2);
   infoSpr.pushSprite(GX - infoSpr.width() / 2, 184);
 }
@@ -372,6 +378,8 @@ void drawStatic() {
 void drawDynamic(bool force = false) {
   static int lastTemp = INT32_MIN, lastSet = -1, lastRpm = -1, lastOut = -1, lastVolt = -1;
   static Mode lastMode = MODE_TEMP;
+  static HeaterState lastState = ST_OFF;
+  static bool lastSensor = false;
   int t = lroundf(cabinTemp * 10);
   int s = mode == MODE_TEMP ? setTemp : mode == MODE_POWER ? powerLevel : fanLevel;
 
@@ -380,10 +388,11 @@ void drawDynamic(bool force = false) {
     drawTemperature();
     drawSetLine();
   }
-  if (force || (int)fanRpm / 10 != lastRpm || (int)(output * 100) != lastOut) drawInfoLine();
+  if (force || (int)fanRpm / 10 != lastRpm || (int)(output * 100) != lastOut ||
+      state != lastState || sensorOk != lastSensor) drawInfoLine();
   if (force || lroundf(voltage * 10) != lastVolt) drawVoltage();
 
-  lastTemp = t; lastSet = s; lastMode = mode;
+  lastTemp = t; lastSet = s; lastMode = mode; lastState = state; lastSensor = sensorOk;
   lastRpm = (int)fanRpm / 10; lastOut = (int)(output * 100); lastVolt = lroundf(voltage * 10);
 }
 
@@ -500,12 +509,20 @@ void pollSensor() {
     if (now - lastSearch < 5000 && lastSearch) return;
     lastSearch = now;
     sensors.begin();
-    if (sensors.getDeviceCount() == 0) return;
+    if (sensors.getDeviceCount() == 0) {
+      // a presence pulse with no device found usually means a wiring fault on the data line
+      Serial.printf("[sensor] no DS18B20 on IO%d (bus presence pulse: %s)\n", TEMP_SENSOR_PIN,
+                    oneWire.reset() ? "yes" : "no");
+      return;
+    }
     sensors.setResolution(11);  // 0.125 C, ~375 ms per conversion
     sensors.setWaitForConversion(true);
     sensors.requestTemperatures();  // one blocking read so the gauge starts with a real value
     float t = sensors.getTempCByIndex(0);
-    if (t == DEVICE_DISCONNECTED_C) return;
+    if (t == DEVICE_DISCONNECTED_C) {
+      Serial.println("[sensor] DS18B20 found but not answering - check the 4.7k resistor");
+      return;
+    }
     cabinTemp = t;
     sensors.setWaitForConversion(false);
     sensors.requestTemperatures();
