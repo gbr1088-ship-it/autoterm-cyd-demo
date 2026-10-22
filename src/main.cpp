@@ -12,9 +12,15 @@
 // A settings page (from the home page) sets the language (English, French,
 // Spanish), the screen brightness and whether the screensaver is used; the
 // choices are kept in flash so they survive a power cut.
+// Link: a second board running the same firmware can be set to REMOTE. It
+// mirrors the MAIN screen over ESP-NOW and sends its button presses back; the
+// main screen stays the only one that controls the heater and relays.
 
 #include <Arduino.h>
 #include <Preferences.h>
+#include <WiFi.h>
+#include <esp_now.h>
+#include <esp_wifi.h>
 #include <sys/time.h>
 #include <SPI.h>
 #include <TFT_eSPI.h>
@@ -131,18 +137,25 @@ Button btnWinUp   = {132, 140, 86, 88};
 Button btnWinDown = {224, 140, 86, 88};
 
 // home page settings button (tall and off the bottom edge, where touch is
-// least accurate) and the settings page (three rows, 64 px each)
+// least accurate) and the settings page: four rows, label on the left and
+// the control on the right
 Button btnSettings = {8, 186, 304, 46};
-const int ROW_X = 6, ROW_W = 308, ROW_H = 64;
-const int ROW_Y[3] = {32, 100, 168};
+const int ROW_X = 6, ROW_W = 308, ROW_H = 46;
+const int ROW_Y[4] = {30, 80, 130, 180};
+const int CTRL_X[3] = {140, 197, 254}, CTRL_W = 54, CTRL_H = 32;
 Button btnLang[3] = {
-  {16, 58, 94, 30},
-  {113, 58, 94, 30},
-  {210, 58, 94, 30},
+  {CTRL_X[0], ROW_Y[0] + 7, CTRL_W, CTRL_H},
+  {CTRL_X[1], ROW_Y[0] + 7, CTRL_W, CTRL_H},
+  {CTRL_X[2], ROW_Y[0] + 7, CTRL_W, CTRL_H},
 };
-Button btnBriMinus = {16, 126, 52, 30};
-Button btnBriPlus  = {252, 126, 52, 30};
-Button btnSaverRow = {ROW_X, 168, ROW_W, ROW_H};
+Button btnBriMinus = {140, ROW_Y[1] + 7, 42, CTRL_H};
+Button btnBriPlus  = {266, ROW_Y[1] + 7, 42, CTRL_H};
+Button btnSaverRow = {ROW_X, ROW_Y[2], ROW_W, ROW_H};
+Button btnRole[3] = {
+  {CTRL_X[0], ROW_Y[3] + 7, CTRL_W, CTRL_H},
+  {CTRL_X[1], ROW_Y[3] + 7, CTRL_W, CTRL_H},
+  {CTRL_X[2], ROW_Y[3] + 7, CTRL_W, CTRL_H},
+};
 
 TFT_eSprite anim(&tft);     // flame / fan animation inside the gauge
 TFT_eSprite tempSpr(&tft);  // big cabin temperature
@@ -164,6 +177,26 @@ bool saverEnabled = true;
 uint8_t backlightLevel() { return 25 * brightness + 5; }   // PWM 30..255
 uint8_t saverLevel() { return backlightLevel() * 3 / 5; }  // screensaver runs dimmer
 
+// ---------------------------------------------------------------- link state
+// OFF: standalone. MAIN: runs the heater/relays and broadcasts its state.
+// REMOTE: shows the main screen's state and forwards button presses to it.
+enum Role : uint8_t { ROLE_OFF, ROLE_MAIN, ROLE_REMOTE, ROLE_COUNT };
+Role role = ROLE_OFF;
+enum Cmd : uint8_t { CMD_JOIN, CMD_POWER, CMD_MODE, CMD_ADJUST, CMD_TOGGLE };
+
+const int MAX_REMOTES = 4;
+uint8_t mainMac[6];                  // remote: the main screen it follows
+bool mainKnown = false;
+uint8_t remoteMacs[MAX_REMOTES][6];  // main: the remotes allowed to send commands
+uint8_t nRemotes = 0;
+uint32_t pairingUntil = 0;           // main: accepts new remotes until then
+bool linkOk = false;                 // remote: hearing the main screen
+
+bool isRemote() { return role == ROLE_REMOTE; }
+bool pairingOpen() { return role == ROLE_MAIN && (int32_t)(pairingUntil - millis()) > 0; }
+void sendCmd(Cmd cmd, int8_t arg = 0);
+void radioBegin();
+
 // ---------------------------------------------------------------- text
 // Every on-screen string in English, French and Spanish. The fonts only have
 // plain ASCII, so French and Spanish are written without accents.
@@ -175,6 +208,7 @@ enum Txt : uint8_t {
   T_LIGHTS, T_WATER_PUMP, T_BILGE_PUMP, T_ON, T_OFF, T_MANUAL, T_AUTO,
   T_DEMO_RELAYS, T_WINDLASS, T_UP, T_DOWN, T_HAULING, T_LETTING_OUT, T_ANCHOR_HOME, T_STOPPED,
   T_SPLASH, T_SETTINGS, T_LANGUAGE, T_BRIGHTNESS, T_SCREENSAVER,
+  T_LINK, T_ROLE_OFF, T_ROLE_MAIN, T_ROLE_REMOTE, T_NO_LINK, T_PAIRING_N, T_SEARCHING, T_MAIN_ONLY,
   T_COUNT
 };
 const char *const TXT[LANG_COUNT][T_COUNT] = {
@@ -186,6 +220,7 @@ const char *const TXT[LANG_COUNT][T_COUNT] = {
     "LIGHTS", "WATER PUMP", "BILGE PUMP", "ON", "OFF", "MANUAL", "AUTO",
     "DEMO RELAYS", "WINDLASS", "UP", "DOWN", "HAULING UP", "LETTING OUT", "ANCHOR HOME", "STOPPED",
     "Heater controller", "SETTINGS", "LANGUAGE", "BRIGHTNESS", "SCREENSAVER",
+    "LINK", "OFF", "MAIN", "REMOTE", "NO LINK", "PAIRING %ds", "SEARCHING", "(main screen only)",
   },
   {  // French
     "VEILLE", "DEMARRAGE", "CHAUFFAGE", "VENTILATION", "EXTINCTION",
@@ -195,6 +230,7 @@ const char *const TXT[LANG_COUNT][T_COUNT] = {
     "ECLAIRAGE", "POMPE A EAU", "POMPE CALE", "MARCHE", "ARRET", "MANUEL", "AUTO",
     "RELAIS DEMO", "GUINDEAU", "MONTER", "DESCENDRE", "REMONTEE", "DESCENTE", "ANCRE RENTREE", "ARRETE",
     "Commande chauffage", "REGLAGES", "LANGUE", "LUMINOSITE", "ECRAN DE VEILLE",
+    "LIAISON", "NON", "ECRAN 1", "ECRAN 2", "PAS DE LIAISON", "APPAIRAGE %ds", "RECHERCHE", "(ecran principal)",
   },
   {  // Spanish
     "EN ESPERA", "ARRANQUE", "CALEFACCION", "VENTILACION", "ENFRIAMIENTO",
@@ -204,9 +240,10 @@ const char *const TXT[LANG_COUNT][T_COUNT] = {
     "LUCES", "BOMBA AGUA", "SENTINA", "ENCENDIDO", "APAGADO", "MANUAL", "AUTO",
     "RELES DEMO", "MOLINETE", "SUBIR", "BAJAR", "SUBIENDO", "BAJANDO", "ANCLA ARRIBA", "PARADO",
     "Control calefaccion", "AJUSTES", "IDIOMA", "BRILLO", "SALVAPANTALLAS",
+    "ENLACE", "NO", "PRINC.", "REMOTO", "SIN ENLACE", "ENLAZANDO %ds", "BUSCANDO", "(pantalla principal)",
   },
 };
-const char *const LANG_NAME[LANG_COUNT] = {"English", "Francais", "Espanol"};
+const char *const LANG_NAME[LANG_COUNT] = {"EN", "FR", "ES"};
 const char *const DAY_NAME[LANG_COUNT][7] = {
   {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"},
   {"Dimanche", "Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi"},
@@ -409,7 +446,13 @@ void drawPill(const char *text, uint16_t col) {
   tft.drawString(text, 140, 13, 2);
 }
 
-void drawStatePill() { drawPill(tr(stateText(state)), STATE_COLOR[state]); }
+// a remote that can't hear the main screen says so instead of showing stale values
+bool showNoLink() { return isRemote() && !linkOk; }
+
+void drawStatePill() {
+  if (showNoLink()) drawPill(tr(T_NO_LINK), C_RED);
+  else drawPill(tr(stateText(state)), STATE_COLOR[state]);
+}
 
 void drawAdjButton(const Button &b, bool plus, bool pressed) {
   uint16_t fill = pressed ? C_PRESS : C_RAISED;
@@ -598,6 +641,7 @@ void setState(HeaterState s) {
 }
 
 void onPowerPressed() {
+  if (isRemote()) { sendCmd(CMD_POWER); return; }
   switch (state) {
     case ST_OFF:
       // HEATER LINK: send start command (mode + setpoint) here
@@ -618,21 +662,25 @@ void onPowerPressed() {
 
 void onModePressed(Mode m) {
   if (m == mode) return;
+  if (isRemote()) { sendCmd(CMD_MODE, m); return; }
   // a running burner can switch between TEMP/POWER; VENT needs a stop first
   bool burning = state == ST_STARTING || state == ST_RUNNING;
   if ((burning && m == MODE_VENT) || (state == ST_VENTING && m != MODE_VENT)) return;
   mode = m;
-  drawModeSelector();
-  drawDynamic();
+  if (page == PAGE_HEATER) {  // may come from a remote while another page is showing
+    drawModeSelector();
+    drawDynamic();
+  }
   // HEATER LINK: send new mode/setpoint
 }
 
 void onAdjust(int d) {
+  if (isRemote()) { sendCmd(CMD_ADJUST, d); return; }
   if (mode == MODE_TEMP) setTemp = constrain(setTemp + d, 1, 30);
   else if (mode == MODE_POWER) powerLevel = constrain(powerLevel + d, 0, 9);
   else fanLevel = constrain(fanLevel + d, 1, 9);
   // HEATER LINK: send new setpoint
-  drawDynamic();
+  if (page == PAGE_HEATER) drawDynamic();
 }
 
 // Simple thermal model so the demo looks alive
@@ -741,9 +789,18 @@ void drawGear(int cx, int cy, uint16_t col, uint16_t bg) {
   tft.fillSmoothCircle(cx, cy, 2, bg, col);
 }
 
+// home page header: which role this screen has in the link, if any
+void drawHomeRolePill() {
+  if (role == ROLE_OFF) return;
+  if (showNoLink()) drawPill(tr(T_NO_LINK), C_RED);
+  else if (isRemote()) drawPill(tr(T_ROLE_REMOTE), C_BLUE);
+  else drawPill(tr(T_ROLE_MAIN), C_GREEN);
+}
+
 void drawHomePage() {
   tft.fillScreen(C_BG);
   drawHeader(false);
+  drawHomeRolePill();
   drawTile(btnHeatTile, tr(T_HEATING));
   drawFlame(tft, btnHeatTile.x + btnHeatTile.w / 2, btnHeatTile.y + TILE_ICON_Y + 16, 15, 0.6f, C_PANEL);
   drawTile(btnUtilTile, tr(T_UTILITIES));
@@ -802,9 +859,11 @@ void drawToggle(int i) {
   tft.drawString(tr(t.on ? t.onText : t.offText), cx, b.y + 80, 2);
 }
 
+// On a remote the windlass buttons are greyed out: whoever runs the windlass
+// should be at the main screen, where they can see the bow.
 void drawWinchButton(const Button &b, bool up, bool active) {
-  uint16_t col = up ? C_GREEN : C_ORANGE;
-  uint16_t fill = active ? col : C_RAISED;
+  uint16_t col = isRemote() ? C_TRACK : up ? C_GREEN : C_ORANGE;
+  uint16_t fill = active ? (up ? C_GREEN : C_ORANGE) : C_RAISED;
   tft.fillSmoothRoundRect(b.x, b.y, b.w, b.h, 14, fill, C_PANEL);
   if (!active) tft.drawFastHLine(b.x + 14, b.y + 1, b.w - 28, tft.alphaBlend(60, C_TEXT, fill));
   int cx = b.x + b.w / 2, cy = b.y + 34;
@@ -812,7 +871,7 @@ void drawWinchButton(const Button &b, bool up, bool active) {
   if (up) tft.fillTriangle(cx - 18, cy + 10, cx + 18, cy + 10, cx, cy - 14, ink);
   else tft.fillTriangle(cx - 18, cy - 10, cx + 18, cy - 10, cx, cy + 14, ink);
   tft.setTextDatum(MC_DATUM);
-  tft.setTextColor(active ? C_BG : C_TEXT, fill);
+  tft.setTextColor(active ? C_BG : isRemote() ? C_DIM : C_TEXT, fill);
   tft.drawString(tr(up ? T_UP : T_DOWN), cx, b.y + 70, 2);
 }
 
@@ -834,41 +893,55 @@ void drawWinchStatus() {
   winSpr.pushSprite(WIN_X + 8, WIN_Y + 22);
 }
 
+void drawUtilPill() {
+  if (showNoLink()) drawPill(tr(T_NO_LINK), C_RED);
+  else drawPill(tr(T_DEMO_RELAYS), C_BLUE);
+}
+
 void drawUtilPage() {
   tft.fillScreen(C_BG);
   drawHeader(true);
-  drawPill(tr(T_DEMO_RELAYS), C_BLUE);
+  drawUtilPill();
   for (int i = 0; i < 3; i++) drawToggle(i);
   tft.fillSmoothRoundRect(WIN_X, WIN_Y, WIN_W, WIN_H, 14, C_PANEL, C_BG);
   tft.setTextDatum(TL_DATUM);
   tft.setTextColor(C_DIM, C_PANEL);
-  tft.drawString(tr(T_WINDLASS), WIN_X + 10, WIN_Y + 6, 2);
+  char title[48];
+  if (isRemote()) snprintf(title, sizeof title, "%s  %s", tr(T_WINDLASS), tr(T_MAIN_ONLY));
+  else snprintf(title, sizeof title, "%s", tr(T_WINDLASS));
+  tft.drawString(title, WIN_X + 10, WIN_Y + 6, 2);
   drawWinchButton(btnWinUp, true, winch == WIN_UP);
   drawWinchButton(btnWinDown, false, winch == WIN_DOWN);
   drawWinchStatus();
 }
 
 void onToggle(int i) {
+  if (isRemote()) { sendCmd(CMD_TOGGLE, i); return; }
   toggles[i].on = !toggles[i].on;
   // RELAY LINK: send relay i on/off to the relay box; show the new state
   // only once the box acknowledges it
   Serial.printf("[relay] %s -> %s\n", trEn(toggles[i].name), trEn(toggles[i].on ? toggles[i].onText : toggles[i].offText));
-  drawToggle(i);
+  if (page == PAGE_UTIL) drawToggle(i);
+}
+
+void drawWinchChange(Winch old) {
+  if (page != PAGE_UTIL) return;
+  if (old == WIN_UP || winch == WIN_UP) drawWinchButton(btnWinUp, true, winch == WIN_UP);
+  if (old == WIN_DOWN || winch == WIN_DOWN) drawWinchButton(btnWinDown, false, winch == WIN_DOWN);
+  drawWinchStatus();
 }
 
 // Hold-to-run: the windlass only moves while a finger is on UP or DOWN.
+// Main screen only: a remote shows the windlass but can't run it.
 void setWinch(Winch w) {
-  if (w == winch) return;
+  if (w == winch || isRemote()) return;
   // RELAY LINK: the relay box never energises UP and DOWN together. While
   // running, send a keep-alive every 100 ms; the box stops the windlass by
   // itself if they stop arriving (finger lifted, crash or radio dropout).
   Winch old = winch;
   winch = w;
   Serial.printf("[relay] windlass -> %s\n", w == WIN_UP ? "UP" : w == WIN_DOWN ? "DOWN" : "STOP");
-  if (page != PAGE_UTIL) return;
-  if (old == WIN_UP || w == WIN_UP) drawWinchButton(btnWinUp, true, w == WIN_UP);
-  if (old == WIN_DOWN || w == WIN_DOWN) drawWinchButton(btnWinDown, false, w == WIN_DOWN);
-  drawWinchStatus();
+  drawWinchChange(old);
 }
 
 void simulateWinch(float dt) {
@@ -981,6 +1054,10 @@ void loadSettings() {
   lang = (Lang)min<uint8_t>(prefs.getUChar("lang", LANG_EN), LANG_COUNT - 1);
   brightness = constrain(prefs.getUChar("bright", 10), 1, 10);
   saverEnabled = prefs.getBool("saver", true);
+  role = (Role)min<uint8_t>(prefs.getUChar("role", ROLE_OFF), ROLE_COUNT - 1);
+  mainKnown = prefs.isKey("main") && prefs.getBytes("main", mainMac, 6) == 6;
+  nRemotes = min<uint8_t>(prefs.getUChar("nremote", 0), MAX_REMOTES);
+  if (nRemotes) prefs.getBytes("remotes", remoteMacs, nRemotes * 6);
   prefs.end();
 }
 
@@ -989,57 +1066,100 @@ void saveSettings() {
   prefs.putUChar("lang", lang);
   prefs.putUChar("bright", brightness);
   prefs.putBool("saver", saverEnabled);
+  prefs.putUChar("role", role);
+  if (mainKnown) prefs.putBytes("main", mainMac, 6);
+  else prefs.remove("main");
+  prefs.putUChar("nremote", nRemotes);
+  prefs.putBytes("remotes", remoteMacs, nRemotes * 6);
   prefs.end();
 }
 
 void drawRow(int i, Txt label) {
   tft.fillSmoothRoundRect(ROW_X, ROW_Y[i], ROW_W, ROW_H, 12, C_PANEL, C_BG);
   tft.setTextDatum(ML_DATUM);
-  tft.setTextColor(i == 2 ? C_TEXT : C_DIM, C_PANEL);
-  tft.drawString(tr(label), 16, i == 2 ? ROW_Y[i] + ROW_H / 2 : ROW_Y[i] + 13, 2);
+  tft.setTextColor(C_TEXT, C_PANEL);
+  tft.drawString(tr(label), 16, ROW_Y[i] + ROW_H / 2, 2);
 }
 
-void drawLangButtons() {
+// three side-by-side choices on the right of a row, the current one in blue
+void drawChoices(const Button *btns, const char *const *labels, int current) {
   tft.setTextDatum(MC_DATUM);
-  for (int i = 0; i < LANG_COUNT; i++) {
-    const Button &b = btnLang[i];
-    bool on = i == lang;
+  for (int i = 0; i < 3; i++) {
+    const Button &b = btns[i];
+    bool on = i == current;
     uint16_t fill = on ? C_BLUE : C_RAISED;
     tft.fillSmoothRoundRect(b.x, b.y, b.w, b.h, b.h / 2, fill, C_PANEL);
     tft.setTextColor(on ? C_TEXT : C_DIM, fill);
-    tft.drawString(LANG_NAME[i], b.x + b.w / 2, b.y + b.h / 2, 2);
+    tft.drawString(labels[i], b.x + b.w / 2, b.y + b.h / 2, 2);
   }
+}
+
+void drawLangButtons() { drawChoices(btnLang, LANG_NAME, lang); }
+
+void drawRoleButtons() {
+  const char *labels[3] = {tr(T_ROLE_OFF), tr(T_ROLE_MAIN), tr(T_ROLE_REMOTE)};
+  drawChoices(btnRole, labels, role);
 }
 
 void drawSmallAdj(const Button &b, bool plus) {
   tft.fillSmoothRoundRect(b.x, b.y, b.w, b.h, 12, C_RAISED, C_PANEL);
   int cx = b.x + b.w / 2, cy = b.y + b.h / 2;
-  tft.drawWideLine(cx - 9, cy, cx + 9, cy, 4, C_TEXT, C_RAISED);
-  if (plus) tft.drawWideLine(cx, cy - 9, cx, cy + 9, 4, C_TEXT, C_RAISED);
+  tft.drawWideLine(cx - 8, cy, cx + 8, cy, 4, C_TEXT, C_RAISED);
+  if (plus) tft.drawWideLine(cx, cy - 8, cx, cy + 8, 4, C_TEXT, C_RAISED);
 }
 
 void drawBrightness() {
   char buf[8];
+  const int cy = ROW_Y[1] + ROW_H / 2;
   snprintf(buf, sizeof buf, "%d%%", brightness * 10);
   tft.setTextDatum(MR_DATUM);
-  tft.setTextColor(C_TEXT, C_PANEL);
-  tft.setTextPadding(40);
-  tft.drawString(buf, 304, ROW_Y[1] + 13, 2);
+  tft.setTextColor(C_YELLOW, C_PANEL);
+  tft.setTextPadding(36);
+  tft.drawString(buf, 134, cy, 2);
   tft.setTextPadding(0);
-  const int bx = 78, by = 134, bw = 164, bh = 14;
-  tft.fillSmoothRoundRect(bx, by, bw, bh, bh / 2, C_TRACK, C_PANEL);
-  tft.fillSmoothRoundRect(bx, by, bw * brightness / 10, bh, bh / 2, C_YELLOW, C_TRACK);
+  const int bx = 188, bw = 74, bh = 12;
+  tft.fillSmoothRoundRect(bx, cy - bh / 2, bw, bh, bh / 2, C_TRACK, C_PANEL);
+  tft.fillSmoothRoundRect(bx, cy - bh / 2, bw * brightness / 10, bh, bh / 2, C_YELLOW, C_TRACK);
 }
 
 void drawSaverSwitch() {
-  const int cx = 278, cy = ROW_Y[2] + ROW_H / 2;
+  const int cx = 282, cy = ROW_Y[2] + ROW_H / 2;
   uint16_t col = saverEnabled ? C_GREEN : C_DIM;
-  tft.fillRect(170, cy - 14, 136, 28, C_PANEL);
+  tft.fillRect(170, cy - 14, 140, 28, C_PANEL);
   tft.fillSmoothRoundRect(cx - 26, cy - 13, 52, 26, 13, col, C_PANEL);
   tft.fillSmoothCircle(saverEnabled ? cx + 13 : cx - 13, cy, 10, C_TEXT, col);
   tft.setTextDatum(MR_DATUM);
   tft.setTextColor(col, C_PANEL);
   tft.drawString(tr(saverEnabled ? T_ON : T_OFF), cx - 34, cy, 2);
+}
+
+// Link row label: "LINK" with a status dot, or the pairing countdown /
+// "searching" while two screens are being paired. Redrawn when it changes.
+void drawLinkLabel(bool force = false) {
+  static char last[24] = "";
+  static uint16_t lastDot = 0;
+  char buf[24];
+  uint16_t col = C_TEXT, dot = C_PANEL;  // no dot unless linked
+  if (pairingOpen()) {
+    snprintf(buf, sizeof buf, tr(T_PAIRING_N), (int)((pairingUntil - millis()) / 1000) + 1);
+    col = C_YELLOW;
+  } else if (isRemote() && !mainKnown) {
+    snprintf(buf, sizeof buf, "%s", tr(T_SEARCHING));
+    col = C_YELLOW;
+  } else {
+    snprintf(buf, sizeof buf, "%s", tr(T_LINK));
+    if (role == ROLE_MAIN) dot = nRemotes ? C_GREEN : C_DIM;
+    if (isRemote()) dot = linkOk ? C_GREEN : C_RED;
+  }
+  if (!force && !strcmp(buf, last) && dot == lastDot) return;
+  strcpy(last, buf);
+  lastDot = dot;
+  const int cy = ROW_Y[3] + ROW_H / 2;
+  tft.fillRect(12, cy - 10, 124, 20, C_PANEL);
+  tft.setTextDatum(ML_DATUM);
+  tft.setTextColor(col, C_PANEL);
+  tft.drawString(buf, 16, cy, 2);
+  if (dot != C_PANEL) tft.fillSmoothCircle(16 + tft.textWidth(buf, 2) + 10, cy, 5, dot, C_PANEL);
 }
 
 void drawSettingsPage() {
@@ -1054,9 +1174,27 @@ void drawSettingsPage() {
   drawBrightness();
   drawRow(2, T_SCREENSAVER);
   drawSaverSwitch();
+  drawRow(3, T_LINK);
+  drawRoleButtons();
+  drawLinkLabel(true);
 }
 
 void showPage(Page p);
+
+// Pairing: tap MAIN on one screen (it accepts new remotes for a minute) and
+// REMOTE on the other (it forgets any old main screen and follows the first
+// main screen it hears that is accepting remotes).
+void onRole(Role r) {
+  if (r == ROLE_MAIN) pairingUntil = millis() + 60000;
+  if (r == ROLE_REMOTE) mainKnown = false;
+  if (r != role) Serial.printf("[link] role -> %s\n", trEn(Txt(T_ROLE_OFF + r)));
+  role = r;
+  linkOk = false;
+  saveSettings();
+  radioBegin();
+  drawRoleButtons();
+  drawLinkLabel(true);
+}
 
 void onLanguage(Lang l) {
   if (l == lang) return;
@@ -1078,6 +1216,249 @@ void onSaverToggle() {
   saverEnabled = !saverEnabled;
   drawSaverSwitch();
   saveSettings();
+}
+
+// ---------------------------------------------------------------- link (ESP-NOW)
+// The main screen broadcasts its whole state 4 times a second; a remote
+// draws from it. A remote sends button presses back as commands, and the
+// main screen acts on them only if that remote was paired with it.
+const uint32_t PKT_MAGIC = 0x31525441;  // "ATR1"; change if the packets change
+const uint8_t RADIO_CHANNEL = 1;
+const uint32_t STATE_EVERY_MS = 250, LINK_TIMEOUT_MS = 2000;
+const uint8_t BROADCAST[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+enum PktType : uint8_t { PKT_STATE = 1, PKT_CMD = 2 };
+
+struct __attribute__((packed)) StatePkt {
+  uint32_t magic;
+  uint8_t type, pairing;
+  uint8_t state, mode;
+  int8_t setTemp, powerLevel, fanLevel;
+  uint8_t toggles, winch, sensorOk;
+  float cabinTemp, output, fanRpm, voltage, chainOut;
+  uint32_t stateMs;  // how long the heater has been in its state
+  uint32_t epoch;    // clock, so both screens show the same time
+};
+struct __attribute__((packed)) CmdPkt {
+  uint32_t magic;
+  uint8_t type, cmd;
+  int8_t arg;
+};
+
+bool radioUp = false;
+bool txNow = false;           // main: send the state straight away
+uint32_t lastStateAt = 0;     // remote: when the main screen was last heard
+bool mainPairing = false;     // remote: main screen is accepting remotes
+
+// received packets are queued by the radio task and handled in loop()
+struct RxMsg {
+  uint8_t mac[6];
+  uint8_t len;
+  uint8_t data[sizeof(StatePkt)];
+};
+RxMsg rxQueue[8];
+volatile uint8_t rxHead = 0, rxTail = 0;
+portMUX_TYPE rxMux = portMUX_INITIALIZER_UNLOCKED;
+
+void onRadioRecv(const uint8_t *mac, const uint8_t *data, int len) {
+  if (len < (int)sizeof(CmdPkt) || len > (int)sizeof(StatePkt)) return;
+  portENTER_CRITICAL(&rxMux);
+  uint8_t next = (rxHead + 1) % 8;
+  if (next != rxTail) {  // drop when full; the next state packet replaces it anyway
+    memcpy(rxQueue[rxHead].mac, mac, 6);
+    rxQueue[rxHead].len = len;
+    memcpy(rxQueue[rxHead].data, data, len);
+    rxHead = next;
+  }
+  portEXIT_CRITICAL(&rxMux);
+}
+
+void addPeer(const uint8_t *mac) {
+  if (esp_now_is_peer_exist(mac)) return;
+  esp_now_peer_info_t p = {};
+  memcpy(p.peer_addr, mac, 6);
+  p.channel = 0;  // current channel
+  p.ifidx = WIFI_IF_STA;
+  p.encrypt = false;
+  esp_now_add_peer(&p);
+}
+
+// The radio stays off for a standalone screen. Once started it stays on
+// until the next restart, even if the role goes back to OFF.
+void radioBegin() {
+  if (role == ROLE_OFF || radioUp) return;
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+  esp_wifi_set_channel(RADIO_CHANNEL, WIFI_SECOND_CHAN_NONE);
+  if (esp_now_init() != ESP_OK) {
+    Serial.println("[link] ESP-NOW failed to start");
+    return;
+  }
+  esp_now_register_recv_cb(onRadioRecv);
+  addPeer(BROADCAST);
+  if (mainKnown) addPeer(mainMac);
+  radioUp = true;
+  Serial.printf("[link] radio on, this screen is %s\n", WiFi.macAddress().c_str());
+}
+
+void sendState() {
+  StatePkt p = {};
+  p.magic = PKT_MAGIC;
+  p.type = PKT_STATE;
+  p.pairing = pairingOpen();
+  p.state = state;
+  p.mode = mode;
+  p.setTemp = setTemp;
+  p.powerLevel = powerLevel;
+  p.fanLevel = fanLevel;
+  for (int i = 0; i < 3; i++) p.toggles |= toggles[i].on << i;
+  p.winch = winch;
+  p.sensorOk = sensorOk;
+  p.cabinTemp = cabinTemp;
+  p.output = output;
+  p.fanRpm = fanRpm;
+  p.voltage = voltage;
+  p.chainOut = chainOut;
+  p.stateMs = millis() - stateSince;
+  p.epoch = time(nullptr);
+  esp_now_send(BROADCAST, (const uint8_t *)&p, sizeof p);
+}
+
+void sendCmd(Cmd cmd, int8_t arg) {
+  if (!radioUp || !mainKnown || (cmd != CMD_JOIN && !linkOk)) return;
+  CmdPkt p = {PKT_MAGIC, PKT_CMD, cmd, arg};
+  esp_now_send(mainMac, (const uint8_t *)&p, sizeof p);
+}
+
+bool isPairedRemote(const uint8_t *mac) {
+  for (int i = 0; i < nRemotes; i++)
+    if (!memcmp(remoteMacs[i], mac, 6)) return true;
+  return false;
+}
+
+// remote: copy the main screen's state in, redrawing only what changed
+void applyState(const StatePkt &p) {
+  if (p.state > ST_COOLDOWN || p.mode > MODE_VENT || p.winch > WIN_DOWN) return;
+  if (p.state != state) setState((HeaterState)p.state);
+  stateSince = millis() - p.stateMs;
+  if (p.mode != mode) {
+    mode = (Mode)p.mode;
+    if (page == PAGE_HEATER) drawModeSelector();
+  }
+  setTemp = p.setTemp;
+  powerLevel = p.powerLevel;
+  fanLevel = p.fanLevel;
+  sensorOk = p.sensorOk;
+  cabinTemp = p.cabinTemp;
+  output = p.output;
+  fanRpm = p.fanRpm;
+  voltage = p.voltage;
+  chainOut = p.chainOut;
+  for (int i = 0; i < 3; i++) {
+    bool on = (p.toggles >> i) & 1;
+    if (on == toggles[i].on) continue;
+    toggles[i].on = on;
+    if (page == PAGE_UTIL) drawToggle(i);
+  }
+  if (p.winch != winch) {
+    Winch old = winch;
+    winch = (Winch)p.winch;
+    drawWinchChange(old);
+  }
+  time_t now = time(nullptr);
+  if (p.epoch > 1600000000 && (now > (time_t)p.epoch + 2 || now < (time_t)p.epoch - 2)) {
+    timeval tv = {(time_t)p.epoch, 0};
+    settimeofday(&tv, nullptr);
+  }
+  setLed(state == ST_RUNNING || state == ST_STARTING, false, state == ST_VENTING || state == ST_COOLDOWN);
+}
+
+// main: act on a paired remote's button press as if it was pressed here
+void handleCmd(const uint8_t *mac, const CmdPkt &c) {
+  if (c.cmd == CMD_JOIN) {
+    if (!pairingOpen() || isPairedRemote(mac) || nRemotes >= MAX_REMOTES) return;
+    memcpy(remoteMacs[nRemotes++], mac, 6);
+    pairingUntil = millis();  // done: stop accepting; tap MAIN again to add another screen
+    saveSettings();
+    Serial.printf("[link] paired remote %02X:%02X:%02X:%02X:%02X:%02X\n", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    if (page == PAGE_SETTINGS) drawLinkLabel(true);
+    return;
+  }
+  if (!isPairedRemote(mac)) return;
+  switch (c.cmd) {
+    case CMD_POWER: onPowerPressed(); break;
+    case CMD_MODE: if (c.arg >= 0 && c.arg <= MODE_VENT) onModePressed((Mode)c.arg); break;
+    case CMD_ADJUST: onAdjust(constrain(c.arg, -1, 1)); break;
+    case CMD_TOGGLE: if (c.arg >= 0 && c.arg < 3) onToggle(c.arg); break;
+  }
+  txNow = true;  // let the remote see the result straight away
+}
+
+void processRadio() {
+  while (rxTail != rxHead) {
+    RxMsg m;
+    portENTER_CRITICAL(&rxMux);
+    m = rxQueue[rxTail];
+    rxTail = (rxTail + 1) % 8;
+    portEXIT_CRITICAL(&rxMux);
+
+    uint32_t magic;
+    memcpy(&magic, m.data, 4);
+    if (magic != PKT_MAGIC) continue;
+    uint8_t type = m.data[4];
+
+    if (role == ROLE_MAIN && type == PKT_CMD && m.len == sizeof(CmdPkt)) {
+      CmdPkt c;
+      memcpy(&c, m.data, sizeof c);
+      handleCmd(m.mac, c);
+    } else if (isRemote() && type == PKT_STATE && m.len == sizeof(StatePkt)) {
+      StatePkt p;
+      memcpy(&p, m.data, sizeof p);
+      if (!mainKnown && p.pairing) {  // follow the first main screen that is pairing
+        memcpy(mainMac, m.mac, 6);
+        mainKnown = true;
+        addPeer(mainMac);
+        saveSettings();
+        Serial.printf("[link] following main %02X:%02X:%02X:%02X:%02X:%02X\n",
+                      mainMac[0], mainMac[1], mainMac[2], mainMac[3], mainMac[4], mainMac[5]);
+        sendCmd(CMD_JOIN);
+      }
+      if (mainKnown && !memcmp(m.mac, mainMac, 6)) {
+        lastStateAt = millis();
+        mainPairing = p.pairing;
+        applyState(p);
+      }
+    }
+  }
+}
+
+// remote: notice the link coming and going and say so on screen
+void updateLink() {
+  bool ok = isRemote() && mainKnown && lastStateAt && millis() - lastStateAt < LINK_TIMEOUT_MS;
+  if (ok == linkOk) return;
+  linkOk = ok;
+  Serial.printf("[link] %s\n", ok ? "connected" : "lost");
+  if (page == PAGE_HEATER) drawStatePill();
+  else if (page == PAGE_UTIL) drawUtilPill();
+  else if (page == PAGE_HOME) drawHomeRolePill();
+  else if (page == PAGE_SETTINGS) drawLinkLabel(true);
+}
+
+void radioLoop() {
+  static uint32_t lastTx = 0, lastJoin = 0;
+  if (!radioUp) return;
+  processRadio();
+  uint32_t now = millis();
+  if (role == ROLE_MAIN && (txNow || now - lastTx >= STATE_EVERY_MS)) {
+    sendState();
+    lastTx = now;
+    txNow = false;
+  }
+  // keep asking to join while the main screen is pairing, in case a request was lost
+  if (isRemote() && mainKnown && mainPairing && now - lastJoin >= 2000) {
+    sendCmd(CMD_JOIN);
+    lastJoin = now;
+  }
+  updateLink();
 }
 
 void showPage(Page p) {
@@ -1184,8 +1565,11 @@ void onPress(int x, int y) {
       if (hit(btnBriMinus, x, y)) onBrightness(-1);
       if (hit(btnBriPlus, x, y)) onBrightness(+1);
       if (hit(btnSaverRow, x, y)) onSaverToggle();
+      for (int i = 0; i < ROLE_COUNT; i++)
+        if (hit(btnRole[i], x, y)) onRole((Role)i);
       break;
     case PAGE_HEATER:
+      if (showNoLink()) break;  // nothing to control without the main screen
       if (hit(btnPower, x, y)) onPowerPressed();
       for (int i = 0; i < 3; i++)
         if (hit(btnMode[i], x, y)) onModePressed((Mode)i);
@@ -1193,6 +1577,7 @@ void onPress(int x, int y) {
       if (hit(btnPlus, x, y))  { drawAdjButton(btnPlus, true, true); onAdjust(+1); }
       break;
     case PAGE_UTIL:
+      if (showNoLink()) break;
       for (int i = 0; i < 3; i++)
         if (hit(btnToggle[i], x, y)) onToggle(i);
       if (hit(btnWinUp, x, y)) setWinch(WIN_UP);
@@ -1262,7 +1647,8 @@ void setup() {
 
   setClockFromBuild();
   loadSettings();
-  pollSensor();  // look for the DS18B20 before the first frame
+  radioBegin();
+  if (!isRemote()) pollSensor();  // look for the DS18B20 before the first frame
 
   splash();
   showPage(PAGE_HOME);
@@ -1276,12 +1662,16 @@ void loop() {
   uint32_t now = millis();
 
   handleTouch();
-  pollSensor();
+  radioLoop();
 
+  // a remote shows the main screen's heater, probe and windlass instead of its own
+  if (!isRemote()) pollSensor();
   if (now - lastSim >= 50) {
     float dt = (now - lastSim) / 1000.0f;
-    simulate(dt);
-    simulateWinch(dt);
+    if (!isRemote()) {
+      simulate(dt);
+      simulateWinch(dt);
+    }
     lastSim = now;
   }
   if (page == PAGE_HEATER && now - lastAnim >= 120) {
@@ -1297,6 +1687,7 @@ void loop() {
     if (page == PAGE_HEATER) drawDynamic();
     else if (page == PAGE_HOME) drawHomeStatus();
     else if (page == PAGE_SAVER) drawSaverClock();
+    else if (page == PAGE_SETTINGS) drawLinkLabel();  // pairing countdown
     if (page == PAGE_HOME || page == PAGE_UTIL || page == PAGE_SETTINGS) drawVoltage();
     lastDraw = now;
   }
