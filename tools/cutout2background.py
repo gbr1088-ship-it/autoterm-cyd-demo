@@ -5,6 +5,8 @@ sized to sit below the clock band at the top of the screen.
 
     pip install pillow
     python tools/cutout2background.py assets/van_cutout.png
+    python tools/cutout2background.py assets/beneteau_logo_white.png --name beneteau \
+        --top 16,45,80 --bottom 12,35,64 --scale 0.72 --middle --no-shadow
 
 To make a cut-out from a photo:
     pip install "rembg[cpu]"
@@ -25,6 +27,9 @@ ap.add_argument("image")
 ap.add_argument("--top", default="236,240,245", help="gradient colour at the top (r,g,b)")
 ap.add_argument("--bottom", default="196,204,215", help="gradient colour at the bottom (r,g,b)")
 ap.add_argument("--name", default="van")
+ap.add_argument("--scale", type=float, default=1.0, help="size relative to the space under the clock")
+ap.add_argument("--middle", action="store_true", help="centre vertically instead of standing on the bottom")
+ap.add_argument("--no-shadow", action="store_true")
 a = ap.parse_args()
 root = Path(__file__).resolve().parent.parent
 top = tuple(int(v) for v in a.top.split(","))
@@ -35,10 +40,10 @@ cut = cut.crop(cut.getchannel("A").point(lambda v: 255 if v > 24 else 0).getbbox
 
 # fit the subject into the area under the clock band, with a margin
 box_w, box_h = W - 24, H - TOP_BAND - 10
-scale = min(box_w / cut.width, box_h / cut.height)
+scale = min(box_w / cut.width, box_h / cut.height) * a.scale
 cut = cut.resize((round(cut.width * scale), round(cut.height * scale)), Image.LANCZOS)
 x = (W - cut.width) // 2
-y = H - 8 - cut.height
+y = TOP_BAND + (H - TOP_BAND - cut.height) // 2 if a.middle else H - 8 - cut.height
 
 canvas = Image.new("RGBA", (W, H))
 draw = ImageDraw.Draw(canvas)
@@ -46,10 +51,11 @@ for row in range(H):
     f = row / (H - 1)
     draw.line([(0, row), (W, row)], fill=tuple(round(t + (b - t) * f) for t, b in zip(top, bottom)) + (255,))
 
-shadow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-ImageDraw.Draw(shadow).ellipse(
-    (x + cut.width * 0.04, y + cut.height - 14, x + cut.width * 0.96, y + cut.height + 4), fill=(20, 26, 34, 120))
-canvas.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(6)))
+if not a.no_shadow:
+    shadow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    ImageDraw.Draw(shadow).ellipse(
+        (x + cut.width * 0.04, y + cut.height - 14, x + cut.width * 0.96, y + cut.height + 4), fill=(20, 26, 34, 120))
+    canvas.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(6)))
 canvas.alpha_composite(cut, (x, y))
 img = canvas.convert("RGB")
 img.save(root / "assets" / f"{a.name}_preview.png")
