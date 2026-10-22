@@ -3,6 +3,10 @@
 //
 // The heater itself is simulated. Every place where a real heater would be
 // commanded is marked with "HEATER LINK" so a UART driver can be dropped in later.
+//
+// Pages: HOME (pick Heating or Utilities), HEATER, UTILITIES. The utilities
+// relays (lights, pumps, windlass) are simulated too; the places where a
+// wireless relay box would be commanded are marked "RELAY LINK".
 
 #include <Arduino.h>
 #include <SPI.h>
@@ -85,10 +89,30 @@ Button btnMode[3] = {
   {SEG_X + SEG_W * 2 / 3, SEG_Y, SEG_W / 3, SEG_H},
 };
 
+// header home button (heater and utilities pages): the house icon and the
+// logo next to it, so it's an easy target for a finger. Stops above y = 32
+// where the utilities tiles start.
+Button btnHome = {0, 0, 112, 31};
+
+// home page tiles
+Button btnHeatTile = {8, 34, 148, 168};
+Button btnUtilTile = {164, 34, 148, 168};
+
+// utilities page
+Button btnToggle[3] = {
+  {6, 32, 98, 94},
+  {111, 32, 98, 94},
+  {216, 32, 98, 94},
+};
+const int WIN_X = 6, WIN_Y = 132, WIN_W = 308, WIN_H = 104;
+Button btnWinUp   = {132, 140, 86, 88};
+Button btnWinDown = {224, 140, 86, 88};
+
 TFT_eSprite anim(&tft);     // flame / fan animation inside the gauge
 TFT_eSprite tempSpr(&tft);  // big cabin temperature
 TFT_eSprite setSpr(&tft);   // setpoint line
 TFT_eSprite infoSpr(&tft);  // rpm / output line
+TFT_eSprite winSpr(&tft);   // windlass chain counter + status
 
 // ---------------------------------------------------------------- sim state
 enum Mode : uint8_t { MODE_TEMP, MODE_POWER, MODE_VENT };
@@ -116,6 +140,32 @@ uint32_t animTick = 0;
 
 const uint32_t START_MS = 12000;
 const uint32_t COOLDOWN_MS = 10000;
+
+// ---------------------------------------------------------------- pages / relays
+enum Page : uint8_t { PAGE_HOME, PAGE_HEATER, PAGE_UTIL };
+Page page = PAGE_HOME;
+
+enum Icon : uint8_t { ICON_BULB, ICON_DROP, ICON_BILGE };
+struct Toggle {
+  const char *name;
+  const char *onText, *offText;
+  uint16_t color;
+  Icon icon;
+  bool on;
+};
+// The bilge toggle is a manual run only: the float switch must stay wired
+// straight to the pump so automatic pumping never depends on this screen.
+Toggle toggles[3] = {
+  {"LIGHTS", "ON", "OFF", C_YELLOW, ICON_BULB, false},
+  {"WATER PUMP", "ON", "OFF", C_BLUE, ICON_DROP, false},
+  {"BILGE PUMP", "MANUAL", "AUTO", C_ORANGE, ICON_BILGE, false},
+};
+
+enum Winch : uint8_t { WIN_STOP, WIN_UP, WIN_DOWN };
+Winch winch = WIN_STOP;
+float chainOut = 12.0f;          // metres of chain deployed
+const float CHAIN_MAX = 60.0f;
+const float CHAIN_RATE = 0.5f;   // m/s
 
 // ---------------------------------------------------------------- helpers
 bool hit(const Button &b, int x, int y) {
@@ -211,29 +261,46 @@ void splash() {
 }
 
 // ---------------------------------------------------------------- main screen
-void drawHeaderLogo() {
+void drawHeaderLogo(int x) {
 #if defined(HAVE_BITMAP_LOGO) && defined(LOGO_SMALL_W)
-  tft.pushImage(6, (26 - LOGO_SMALL_H) / 2, LOGO_SMALL_W, LOGO_SMALL_H, logo_small_bitmap);
+  tft.pushImage(x, (26 - LOGO_SMALL_H) / 2, LOGO_SMALL_W, LOGO_SMALL_H, logo_small_bitmap);
 #else
-  drawFlame(tft, 14, 22, 8, 0.5f, C_PANEL);
+  drawFlame(tft, x + 8, 22, 8, 0.5f, C_PANEL);
   tft.setFreeFont(&FreeSansBold9pt7b);
   tft.setTextDatum(ML_DATUM);
   tft.setTextColor(C_TEXT);
-  tft.drawString("AUTOTERM", 26, 13);
+  tft.drawString("AUTOTERM", x + 20, 13);
   tft.setTextFont(2);
 #endif
 }
 
-void drawStatePill() {
-  uint16_t col = STATE_COLOR[state];
+// small house icon; tapping it returns to the home page
+void drawHomeIcon() {
+  const int cx = 15, cy = 14;
+  tft.fillTriangle(cx - 11, cy - 1, cx + 11, cy - 1, cx, cy - 11, C_TEXT);
+  tft.fillRect(cx - 7, cy - 1, 14, 10, C_TEXT);
+  tft.fillRect(cx - 2, cy + 3, 4, 6, C_PANEL);
+  tft.drawFastVLine(30, 4, 18, C_RAISED);
+}
+
+void drawHeader(bool homeButton) {
+  tft.fillRect(0, 0, 320, 26, C_PANEL);
+  tft.drawFastHLine(0, 26, 320, C_RAISED);
+  if (homeButton) drawHomeIcon();
+  drawHeaderLogo(homeButton ? 36 : 6);
+}
+
+void drawPill(const char *text, uint16_t col) {
   uint16_t fill = tft.alphaBlend(50, col, C_PANEL);
   tft.fillRect(116, 2, 126, 22, C_PANEL);
   tft.fillSmoothRoundRect(118, 4, 122, 18, 9, fill, C_PANEL);
   tft.fillSmoothCircle(130, 13, 4, col, fill);
   tft.setTextDatum(ML_DATUM);
   tft.setTextColor(col, fill);
-  tft.drawString(STATE_TEXT[state], 140, 13, 2);
+  tft.drawString(text, 140, 13, 2);
 }
+
+void drawStatePill() { drawPill(STATE_TEXT[state], STATE_COLOR[state]); }
 
 void drawAdjButton(const Button &b, bool plus, bool pressed) {
   uint16_t fill = pressed ? C_PRESS : C_RAISED;
@@ -362,9 +429,7 @@ void drawVoltage() {
 
 void drawStatic() {
   tft.fillScreen(C_BG);
-  tft.fillRect(0, 0, 320, 26, C_PANEL);
-  tft.drawFastHLine(0, 26, 320, C_RAISED);
-  drawHeaderLogo();
+  drawHeader(true);
   drawStatePill();
   drawAdjButton(btnPlus, true, false);
   drawAdjButton(btnMinus, false, false);
@@ -416,8 +481,10 @@ void drawAnimation() {
 void setState(HeaterState s) {
   state = s;
   stateSince = millis();
-  drawPowerButton();
-  drawStatePill();
+  if (page == PAGE_HEATER) {
+    drawPowerButton();
+    drawStatePill();
+  }
   Serial.printf("[heater] -> %s\n", STATE_TEXT[s]);
 }
 
@@ -497,6 +564,209 @@ void simulate(float dt) {
   setLed(state == ST_RUNNING || state == ST_STARTING, false, state == ST_VENTING || state == ST_COOLDOWN);
 }
 
+// ---------------------------------------------------------------- home page
+void drawSwitchIcon(int cx, int cy, bool on, uint16_t bg) {
+  uint16_t col = on ? C_GREEN : C_DIM;
+  tft.fillSmoothRoundRect(cx - 24, cy - 12, 48, 24, 12, col, bg);
+  tft.fillSmoothCircle(on ? cx + 12 : cx - 12, cy, 9, C_TEXT, col);
+}
+
+int utilitiesOn() {
+  int n = 0;
+  for (auto &t : toggles) n += t.on;
+  return n;
+}
+
+void drawTile(const Button &b, const char *title) {
+  tft.fillSmoothRoundRect(b.x, b.y, b.w, b.h, 16, C_PANEL, C_BG);
+  tft.drawFastHLine(b.x + 16, b.y + 1, b.w - 32, tft.alphaBlend(60, C_TEXT, C_PANEL));
+  tft.setFreeFont(&FreeSansBold9pt7b);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(C_TEXT);
+  tft.drawString(title, b.x + b.w / 2, b.y + 108);
+  tft.setTextFont(2);
+}
+
+// the two status lines under each tile title; redrawn when they change
+void drawHomeStatus(bool force = false) {
+  static int lastTemp = INT32_MIN, lastOn = -1;
+  static HeaterState lastState = ST_OFF;
+  static Winch lastWinch = WIN_STOP;
+  int t = lroundf(cabinTemp * 10), on = utilitiesOn();
+  char buf[24];
+
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextPadding(136);
+  if (force || t != lastTemp || state != lastState) {
+    const Button &b = btnHeatTile;
+    tft.setTextColor(STATE_COLOR[state], C_PANEL);
+    tft.drawString(STATE_TEXT[state], b.x + b.w / 2, b.y + 132, 2);
+    snprintf(buf, sizeof buf, "Cabin %.1f C", cabinTemp);
+    tft.setTextColor(C_DIM, C_PANEL);
+    tft.drawString(buf, b.x + b.w / 2, b.y + 150, 2);
+  }
+  if (force || on != lastOn || winch != lastWinch) {
+    const Button &b = btnUtilTile;
+    if (on != lastOn || force) {
+      tft.fillRect(b.x + 40, b.y + 30, 68, 40, C_PANEL);
+      drawSwitchIcon(b.x + b.w / 2, b.y + 50, on > 0, C_PANEL);
+    }
+    if (on) snprintf(buf, sizeof buf, "%d of 3 on", on);
+    else snprintf(buf, sizeof buf, "All off");
+    tft.setTextColor(on ? C_GREEN : C_DIM, C_PANEL);
+    tft.drawString(buf, b.x + b.w / 2, b.y + 132, 2);
+    snprintf(buf, sizeof buf, "Chain %.1f m", chainOut);
+    tft.setTextColor(winch != WIN_STOP ? C_YELLOW : C_DIM, C_PANEL);
+    tft.drawString(winch != WIN_STOP ? "Windlass running" : buf, b.x + b.w / 2, b.y + 150, 2);
+  }
+  tft.setTextPadding(0);
+  lastTemp = t; lastState = state; lastOn = on; lastWinch = winch;
+}
+
+void drawHomePage() {
+  tft.fillScreen(C_BG);
+  drawHeader(false);
+  drawTile(btnHeatTile, "HEATING");
+  drawFlame(tft, btnHeatTile.x + btnHeatTile.w / 2, btnHeatTile.y + 70, 16, 0.6f, C_PANEL);
+  drawTile(btnUtilTile, "UTILITIES");
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(C_DIM, C_BG);
+  tft.drawString("Demo - heater and relays are simulated", 160, 220, 2);
+  drawHomeStatus(true);
+}
+
+// ---------------------------------------------------------------- utilities page
+void drawIcon(Icon icon, int cx, int cy, uint16_t col, bool glow, uint16_t bg) {
+  switch (icon) {
+    case ICON_BULB:
+      if (glow) tft.fillSmoothCircle(cx, cy - 4, 18, tft.alphaBlend(70, col, bg), bg);
+      tft.fillSmoothCircle(cx, cy - 4, 11, col, glow ? tft.alphaBlend(70, col, bg) : bg);
+      tft.fillRect(cx - 5, cy + 6, 10, 9, col);
+      tft.drawFastHLine(cx - 5, cy + 9, 10, bg);
+      tft.drawFastHLine(cx - 5, cy + 12, 10, bg);
+      break;
+    case ICON_DROP:
+      tft.fillSmoothCircle(cx, cy + 4, 11, col, bg);
+      tft.fillTriangle(cx - 10, cy, cx + 10, cy, cx, cy - 17, col);
+      break;
+    case ICON_BILGE:
+      tft.fillTriangle(cx - 11, cy - 2, cx + 11, cy - 2, cx, cy - 16, col);
+      tft.fillRect(cx - 4, cy - 2, 8, 10, col);
+      tft.drawWideLine(cx - 15, cy + 14, cx - 7, cy + 10, 3, col, bg);
+      tft.drawWideLine(cx - 7, cy + 10, cx, cy + 14, 3, col, bg);
+      tft.drawWideLine(cx, cy + 14, cx + 7, cy + 10, 3, col, bg);
+      tft.drawWideLine(cx + 7, cy + 10, cx + 15, cy + 14, 3, col, bg);
+      break;
+  }
+}
+
+void drawToggle(int i) {
+  const Button &b = btnToggle[i];
+  const Toggle &t = toggles[i];
+  uint16_t fill = t.on ? tft.alphaBlend(45, t.color, C_PANEL) : C_PANEL;
+  tft.fillSmoothRoundRect(b.x, b.y, b.w, b.h, 14, fill, C_BG);
+  if (t.on) tft.drawSmoothRoundRect(b.x, b.y, 14, 13, b.w - 1, b.h - 1, t.color, C_BG);
+  int cx = b.x + b.w / 2;
+  drawIcon(t.icon, cx, b.y + 32, t.on ? t.color : C_DIM, t.on, fill);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(C_TEXT, fill);
+  tft.drawString(t.name, cx, b.y + 62, 2);
+  tft.setTextColor(t.on ? t.color : C_DIM, fill);
+  tft.drawString(t.on ? t.onText : t.offText, cx, b.y + 80, 2);
+}
+
+void drawWinchButton(const Button &b, bool up, bool active) {
+  uint16_t col = up ? C_GREEN : C_ORANGE;
+  uint16_t fill = active ? col : C_RAISED;
+  tft.fillSmoothRoundRect(b.x, b.y, b.w, b.h, 14, fill, C_PANEL);
+  if (!active) tft.drawFastHLine(b.x + 14, b.y + 1, b.w - 28, tft.alphaBlend(60, C_TEXT, fill));
+  int cx = b.x + b.w / 2, cy = b.y + 34;
+  uint16_t ink = active ? C_BG : col;
+  if (up) tft.fillTriangle(cx - 18, cy + 10, cx + 18, cy + 10, cx, cy - 14, ink);
+  else tft.fillTriangle(cx - 18, cy - 10, cx + 18, cy - 10, cx, cy + 14, ink);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(active ? C_BG : C_TEXT, fill);
+  tft.drawString(up ? "UP" : "DOWN", cx, b.y + 70, 2);
+}
+
+void drawWinchStatus() {
+  char buf[12];
+  winSpr.fillSprite(C_PANEL);
+  winSpr.setFreeFont(&FreeSansBold18pt7b);
+  winSpr.setTextDatum(ML_DATUM);
+  winSpr.setTextColor(C_TEXT);
+  snprintf(buf, sizeof buf, "%.1f", chainOut);
+  winSpr.drawString(buf, 2, 22);
+  winSpr.setTextColor(C_DIM);
+  winSpr.drawString("m", winSpr.textWidth(buf) + 6, 26, 2);
+  const char *txt = winch == WIN_UP ? "HAULING UP" : winch == WIN_DOWN ? "LETTING OUT"
+                  : chainOut <= 0 ? "ANCHOR HOME" : "STOPPED";
+  uint16_t col = winch == WIN_UP ? C_GREEN : winch == WIN_DOWN ? C_ORANGE : C_DIM;
+  winSpr.setTextColor(col);
+  winSpr.drawString(txt, 2, 56, 2);
+  winSpr.pushSprite(WIN_X + 8, WIN_Y + 22);
+}
+
+void drawUtilPage() {
+  tft.fillScreen(C_BG);
+  drawHeader(true);
+  drawPill("DEMO RELAYS", C_BLUE);
+  for (int i = 0; i < 3; i++) drawToggle(i);
+  tft.fillSmoothRoundRect(WIN_X, WIN_Y, WIN_W, WIN_H, 14, C_PANEL, C_BG);
+  tft.setTextDatum(TL_DATUM);
+  tft.setTextColor(C_DIM, C_PANEL);
+  tft.drawString("WINDLASS  (hold)", WIN_X + 10, WIN_Y + 6, 2);
+  drawWinchButton(btnWinUp, true, winch == WIN_UP);
+  drawWinchButton(btnWinDown, false, winch == WIN_DOWN);
+  drawWinchStatus();
+}
+
+void onToggle(int i) {
+  toggles[i].on = !toggles[i].on;
+  // RELAY LINK: send relay i on/off to the relay box; show the new state
+  // only once the box acknowledges it
+  Serial.printf("[relay] %s -> %s\n", toggles[i].name, toggles[i].on ? toggles[i].onText : toggles[i].offText);
+  drawToggle(i);
+}
+
+// Hold-to-run: the windlass only moves while a finger is on UP or DOWN.
+void setWinch(Winch w) {
+  if (w == winch) return;
+  // RELAY LINK: the relay box never energises UP and DOWN together. While
+  // running, send a keep-alive every 100 ms; the box stops the windlass by
+  // itself if they stop arriving (finger lifted, crash or radio dropout).
+  Winch old = winch;
+  winch = w;
+  Serial.printf("[relay] windlass -> %s\n", w == WIN_UP ? "UP" : w == WIN_DOWN ? "DOWN" : "STOP");
+  if (page != PAGE_UTIL) return;
+  if (old == WIN_UP || w == WIN_UP) drawWinchButton(btnWinUp, true, w == WIN_UP);
+  if (old == WIN_DOWN || w == WIN_DOWN) drawWinchButton(btnWinDown, false, w == WIN_DOWN);
+  drawWinchStatus();
+}
+
+void simulateWinch(float dt) {
+  if (winch == WIN_UP) {
+    chainOut -= CHAIN_RATE * dt;
+    if (chainOut <= 0) { chainOut = 0; setWinch(WIN_STOP); }  // anchor home: stop
+  } else if (winch == WIN_DOWN) {
+    chainOut += CHAIN_RATE * dt;
+    if (chainOut >= CHAIN_MAX) { chainOut = CHAIN_MAX; setWinch(WIN_STOP); }
+  }
+}
+
+void showPage(Page p) {
+  setWinch(WIN_STOP);
+  page = p;
+  if (p == PAGE_HOME) drawHomePage();
+  else if (p == PAGE_UTIL) drawUtilPage();
+  else {
+    drawStatic();
+    drawDynamic(true);
+    drawAnimation();
+  }
+  drawVoltage();
+}
+
 // ---------------------------------------------------------------- temperature probe
 // Non-blocking: start a conversion, collect the result on the next call.
 // If the probe is missing or unplugged the demo falls back to the simulation.
@@ -559,30 +829,59 @@ bool readTouch(int &x, int &y) {
   return true;
 }
 
+void onPress(int x, int y) {
+  if (page != PAGE_HOME && hit(btnHome, x, y)) { showPage(PAGE_HOME); return; }
+  switch (page) {
+    case PAGE_HOME:
+      if (hit(btnHeatTile, x, y)) showPage(PAGE_HEATER);
+      if (hit(btnUtilTile, x, y)) showPage(PAGE_UTIL);
+      break;
+    case PAGE_HEATER:
+      if (hit(btnPower, x, y)) onPowerPressed();
+      for (int i = 0; i < 3; i++)
+        if (hit(btnMode[i], x, y)) onModePressed((Mode)i);
+      if (hit(btnMinus, x, y)) { drawAdjButton(btnMinus, false, true); onAdjust(-1); }
+      if (hit(btnPlus, x, y))  { drawAdjButton(btnPlus, true, true); onAdjust(+1); }
+      break;
+    case PAGE_UTIL:
+      for (int i = 0; i < 3; i++)
+        if (hit(btnToggle[i], x, y)) onToggle(i);
+      if (hit(btnWinUp, x, y)) setWinch(WIN_UP);
+      if (hit(btnWinDown, x, y)) setWinch(WIN_DOWN);
+      break;
+  }
+}
+
 void handleTouch() {
-  static bool wasDown = false;
-  static uint32_t downAt = 0, lastRepeat = 0;
+  static bool wasHeld = false;
+  static uint32_t downAt = 0, lastRepeat = 0, lastSeen = 0;
   int x, y;
   bool down = readTouch(x, y);
   uint32_t now = millis();
+  if (down) lastSeen = now;
+  // the touch reading drops out for a moment now and then while a finger is
+  // held; treat gaps under 150 ms as still held
+  bool held = down || (wasHeld && now - lastSeen < 150);
 
-  if (down && !wasDown) {
+  if (down && !wasHeld) {
     downAt = lastRepeat = now;
-    if (hit(btnPower, x, y)) onPowerPressed();
-    for (int i = 0; i < 3; i++)
-      if (hit(btnMode[i], x, y)) onModePressed((Mode)i);
-    if (hit(btnMinus, x, y)) { drawAdjButton(btnMinus, false, true); onAdjust(-1); }
-    if (hit(btnPlus, x, y))  { drawAdjButton(btnPlus, true, true); onAdjust(+1); }
-  } else if (down && now - downAt > 500 && now - lastRepeat > 150) {
+    onPress(x, y);
+  } else if (down && page == PAGE_HEATER && now - downAt > 500 && now - lastRepeat > 150) {
     // hold +/- to auto-repeat
     lastRepeat = now;
     if (hit(btnMinus, x, y)) onAdjust(-1);
     if (hit(btnPlus, x, y)) onAdjust(+1);
-  } else if (!down && wasDown) {
-    drawAdjButton(btnMinus, false, false);
-    drawAdjButton(btnPlus, true, false);
+  } else if (down && page == PAGE_UTIL && winch != WIN_STOP) {
+    // sliding off the windlass button stops it
+    if (!hit(winch == WIN_UP ? btnWinUp : btnWinDown, x, y)) setWinch(WIN_STOP);
+  } else if (!held && wasHeld) {
+    if (page == PAGE_HEATER) {
+      drawAdjButton(btnMinus, false, false);
+      drawAdjButton(btnPlus, true, false);
+    }
+    setWinch(WIN_STOP);
   }
-  wasDown = down;
+  wasHeld = held;
 }
 
 // ---------------------------------------------------------------- arduino
@@ -609,35 +908,43 @@ void setup() {
   tempSpr.createSprite(122, 44);
   setSpr.createSprite(112, 22);
   infoSpr.createSprite(120, 18);
+  winSpr.createSprite(116, 72);
 
   pollSensor();  // look for the DS18B20 before the first frame
 
   splash();
-  drawStatic();
-  drawDynamic(true);
-  drawAnimation();
+  showPage(PAGE_HOME);
   fadeBacklight(0, 255, 300);
   stateSince = millis();
 }
 
 void loop() {
   static uint32_t lastSim = millis(), lastDraw = 0, lastAnim = 0;
+  static int lastChain = -1;
   uint32_t now = millis();
 
   handleTouch();
   pollSensor();
 
   if (now - lastSim >= 50) {
-    simulate((now - lastSim) / 1000.0f);
+    float dt = (now - lastSim) / 1000.0f;
+    simulate(dt);
+    simulateWinch(dt);
     lastSim = now;
   }
-  if (now - lastAnim >= 120) {
+  if (page == PAGE_HEATER && now - lastAnim >= 120) {
     animTick++;
     drawAnimation();
     lastAnim = now;
   }
+  if (page == PAGE_UTIL && lroundf(chainOut * 10) != lastChain) {
+    lastChain = lroundf(chainOut * 10);
+    drawWinchStatus();
+  }
   if (now - lastDraw >= 250) {
-    drawDynamic();
+    if (page == PAGE_HEATER) drawDynamic();
+    else if (page == PAGE_HOME) drawHomeStatus();
+    if (page != PAGE_HEATER) drawVoltage();
     lastDraw = now;
   }
 }
