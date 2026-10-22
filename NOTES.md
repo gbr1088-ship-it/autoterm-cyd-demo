@@ -7,8 +7,11 @@ The README covers how to build and use the project. This file covers **where thi
 - **Working demo, tested on the real board.** It's flashed to an ESP32-2432S028 and runs well: splash, touch and the full UI.
 - **The heater is still simulated.** Nothing talks to a real Autoterm yet.
 - **DS18B20 cabin probe supported** on IO22. With no probe connected, the temperature is simulated. The code compiles, but it hasn't been tested with the user's probe yet.
-- **Redesigned UI and real logo.** The redesign added the arc gauge, the round power button and the pill mode selector, plus the real Autoterm logo. It compiles cleanly. *Confirm on the board that it looks right.*
+- **Redesigned UI and real logo.** The redesign added the arc gauge, the round power button and the pill mode selector, plus the real Autoterm logo. Confirmed working on the board.
+- **Probe not detected yet.** On the board the log shows `no DS18B20 on IO22 (bus presence pulse: no)`: nothing answers on the pin, so it's wiring (resistor, CN1 vs P3, data wire). Waiting on the user to check.
+- **Home page + Utilities page (demo).** After the splash a home page picks Heating or Utilities. Utilities has light, water pump and bilge toggles and a hold-to-run windlass, all simulated. Tested on the board; the header home button was enlarged after the user found it too small.
 - **Repo:** `gbr1088-ship-it/autoterm-cyd-demo` (private). Pushes are done from the laptop.
+- **Laptop setup (Windows):** a local Claude session now runs on the laptop and builds/flashes over USB (board on **COM4**, CH340). Python 3.12 is in `%LOCALAPPDATA%\Programs\Python\Python312`; run PlatformIO as `python -m platformio`. Git isn't on PATH: use GitHub Desktop's copy in `%LOCALAPPDATA%\GitHubDesktop\app-*\resources\app\git\cmd`.
 
 ## Hardware: ESP32-2432S028 ("Cheap Yellow Display")
 | Function | Pins |
@@ -30,6 +33,10 @@ The README covers how to build and use the project. This file covers **where thi
 - **Redraws:** `drawDynamic()` redraws only when a value changes.
 - **`HEATER LINK` comments:** these mark where real heater commands go, in `onPowerPressed`, `onModePressed` and `onAdjust`. `simulate()` is the part to replace with real status polling.
 - **Colours:** constants at the top. `C_RED` = Autoterm Pantone 185 red.
+- **Pages:** `page` is `PAGE_HOME`, `PAGE_HEATER` or `PAGE_UTIL`; `showPage()` switches and redraws. Touch goes through `handleTouch()` → `onPress()`, which dispatches by page. The heater simulation runs on every page; drawing only happens for the visible one, and `setState()` only redraws heater widgets when the heater page is showing.
+- **Home button:** `btnHome` covers the house icon *and* the logo (0,0 112×31) because the icon alone was too small for a finger. It stops above y = 32 where the utilities tiles start.
+- **Utilities:** `toggles[]` (lights, water pump, bilge) and `winch` / `chainOut` for the windlass. `RELAY LINK` comments in `onToggle()` and `setWinch()` mark where relay-box commands go. `simulateWinch()` moves the chain counter (0.5 m/s, stops at 0 and 60 m).
+- **Touch hold:** the XPT2046 reading drops out briefly while a finger is held, so gaps under 150 ms count as still held. Without this the windlass would stutter.
 - **Probe reading:** `pollSensor()` reads the DS18B20 without blocking. It starts a conversion and collects it a second later. It searches again every 5 s, and after 3 failed reads it falls back to the simulation. `simulate()` only changes `cabinTemp` while `sensorOk` is false.
 
 ## Logo
@@ -39,7 +46,7 @@ The README covers how to build and use the project. This file covers **where thi
 - **Trademark:** the logo is Autoterm's. Fine on your own device; ask Autoterm before sharing or selling anything that uses it.
 
 ## Building
-1. **Normal:** PlatformIO (`pio run -t upload`). Versions are pinned: espressif32 6.9.0 (Arduino core 2.0.17), TFT_eSPI 2.5.43, XPT2046_Touchscreen 1.4, OneWire 2.3.8, DallasTemperature 3.9.0.
+1. **Normal:** PlatformIO (`pio run -t upload`). Versions are pinned: espressif32 6.9.0 (Arduino core 2.0.17), TFT_eSPI 2.5.43, XPT2046_Touchscreen 1.4, OneWire 2.3.8, DallasTemperature 3.9.0. DallasTemperature 3.9.0 is no longer in the PlatformIO registry, so `platformio.ini` fetches it from its GitHub tag (needs git).
 2. **If the PlatformIO registry is blocked** (it was in the cloud session): use arduino-cli 1.1.1 from GitHub releases.
    - Clone `espressif/arduino-esp32` at tag `2.0.17` into `<user>/hardware/espressif/esp32`, then run its `tools/get.py`.
    - Clone the four libraries (TFT_eSPI, XPT2046_Touchscreen, OneWire and DallasTemperature, at the versions above) into `<user>/libraries`. DallasTemperature lives at `milesburton/Arduino-Temperature-Control-Library`, tag `3.9.0`.
@@ -88,8 +95,25 @@ The README covers how to build and use the project. This file covers **where thi
 - In TEMP mode, does the heater rely on the panel's built-in temperature sensor? If so, the CYD must send its own reading.
 - Can the original panel stay connected alongside the CYD? That needs two UARTs. The current plan is to replace the panel instead.
 
+## Utilities: relay box plan (agreed with the user, not built yet)
+The screen will also control lights, water pump, bilge pump and the anchor windlass on a boat, through a separate wireless relay box.
+- **Link:** ESP-NOW between the CYD and an ESP32 relay board. No router needed, a few ms latency, good range on a boat. Bluetooth and WiFi were considered and rejected (pairing hassle / needs a router).
+- **Relay board:** an ESP32 relay board that runs straight from 12 V, e.g. Kincony KC868-A4/A8, or a generic "ESP32 4-channel relay board, 7–30 V input". Not bought yet.
+- **Wiring:** the board's ~10 A relays are control switches only.
+  - Lights: direct if under ~5 A, otherwise via an automotive relay.
+  - Water pump: via a fused automotive 30/40 A relay.
+  - Bilge pump: relay **in parallel with the float switch**, so the screen can only add a manual run. The automatic float circuit must never depend on the screen or the radio.
+  - Windlass: switch the coils of its existing up/down solenoid or contactor, never the motor (100 A+).
+- **Safety rules to build into both ends:**
+  1. Windlass is hold-to-run. The screen sends a keep-alive every 100 ms while a button is held; the relay box stops by itself after ~300 ms without one.
+  2. The relay box never energises UP and DOWN together (enforced on the box, not just the screen).
+  3. The original windlass switches / foot switches stay fitted.
+  4. Relay box powers up with everything off, and turns everything except the bilge off if it loses contact with the screen.
+  5. Fuse every circuit; sealed enclosure.
+- **Screen side:** show a relay as on only after the box acknowledges it.
+
 ## Next steps
-1. Confirm the redesigned UI looks good on the board, and tweak it if needed.
+1. Fix the probe wiring with the user, then confirm "Probe OK" on the screen.
 2. Write `heater.cpp/.h`, the protocol driver:
    - frame builder and parser, CRC
    - status polling about once a second
@@ -97,5 +121,6 @@ The README covers how to build and use the project. This file covers **where thi
 3. Add a demo/real switch, such as a long-press on the logo or a compile flag, so the simulation stays available.
 4. Show heater error codes on the screen.
 5. Bench test with the heater, with the original panel kept as a fallback.
+6. Once the user picks a relay board: write its ESP-NOW firmware and replace the `RELAY LINK` stubs with real commands, keep-alive and acknowledgements.
 
 **Safety:** never cut power to stop the heater, because it must run its cool-down purge. Fit a CO alarm in any heated space.
