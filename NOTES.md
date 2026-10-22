@@ -24,6 +24,7 @@ The README covers how to build and use the project. This file covers **where thi
 | **Pin plan** | **IO22 = DS18B20 data, IO27 = heater TX, IO35 = heater RX** (input only, fine for RX) |
 | Not usable | IO1/IO3 (USB serial) |
 
+- **This board's panel needs `TFT_INVERSION_ON`** (set in `platformio.ini`). Without it everything showed as a negative: white background, cyan instead of red.
 - Touch uses `XPT2046_Touchscreen`, not TFT_eSPI's touch, because it's on a separate SPI bus.
 - The backlight is driven by PWM (LEDC channel 0) for the fades.
 
@@ -36,6 +37,7 @@ The README covers how to build and use the project. This file covers **where thi
 - **Pages:** `page` is `PAGE_HOME`, `PAGE_HEATER` or `PAGE_UTIL`; `showPage()` switches and redraws. Touch goes through `handleTouch()` → `onPress()`, which dispatches by page. The heater simulation runs on every page; drawing only happens for the visible one, and `setState()` only redraws heater widgets when the heater page is showing.
 - **Home button:** `btnHome` covers the house icon *and* the logo (0,0 112×31) because the icon alone was too small for a finger. It stops above y = 32 where the utilities tiles start.
 - **Utilities:** `toggles[]` (lights, water pump, bilge) and `winch` / `chainOut` for the windlass. `RELAY LINK` comments in `onToggle()` and `setWinch()` mark where relay-box commands go. `simulateWinch()` moves the chain counter (0.5 m/s, stops at 0 and 60 m).
+- **Screensaver:** `PAGE_SAVER` starts after 60 s without a touch and shows the user's van (`src/van.h`, made from `assets/screensaver.jpg` with rembg → `assets/van_cutout.png` → `tools/cutout2background.py`) with the date and time; a tap returns to the previous page without pressing anything. `SAVER_IMAGES[]` can hold several images and alternates every 30 s. The clock starts at the firmware build time and resets on power-up (no RTC or internet time yet). Use `millis()` rather than the loop's `now` for the idle check, or the unsigned subtraction wraps and the screensaver fires on every touch.
 - **Touch hold:** the XPT2046 reading drops out briefly while a finger is held, so gaps under 150 ms count as still held. Without this the windlass would stutter.
 - **Probe reading:** `pollSensor()` reads the DS18B20 without blocking. It starts a conversion and collects it a second later. It searches again every 5 s, and after 3 failed reads it falls back to the simulation. `simulate()` only changes `cabinTemp` while `sensorOk` is false.
 
