@@ -3,7 +3,7 @@
 #   1. raise FW_VERSION in platformio.ini
 #   2. powershell -ExecutionPolicy Bypass -File tools\publish_update.ps1
 #
-# Builds both versions (kolex, beneteau), copies them into a local clone of the
+# Builds every version (avl, kolex, beneteau), copies them into a local clone of the
 # secret Gist named in UPDATE_BASE_URL, writes version.txt with each file's
 # SHA-256 and size, and pushes. Also refreshes the USB files in firmware\.
 # GitHub's download servers can take up to 5 minutes to show the new files.
@@ -11,7 +11,7 @@
 param([string]$GistDir = (Join-Path $PSScriptRoot '..\..\autoterm_updates_gist'))
 $ErrorActionPreference = 'Stop'
 $root = Resolve-Path (Join-Path $PSScriptRoot '..')
-$envs = 'kolex', 'beneteau'
+$envs = 'avl', 'kolex', 'beneteau'
 
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
     $desktopGit = Get-ChildItem "$env:LOCALAPPDATA\GitHubDesktop\app-*\resources\app\git\cmd" -Directory |

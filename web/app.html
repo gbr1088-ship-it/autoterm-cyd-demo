@@ -1,7 +1,7 @@
-<title>Cabin Control</title>
+<title>Adventure Van Life</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <style>
-/* Phone remote for the cabin screen: one column, gauge first, controls under the thumb, tabs at the bottom.
+/* Adventure Van Life phone remote for the cabin screen: one column, gauge first, controls under the thumb, tabs at the bottom.
    One dark look on purpose: it matches the screen and is easy on the eyes at night. */
 :root {
   color-scheme: dark;
@@ -17,6 +17,7 @@
   --yellow: #ffd640;
   --green: #28c864;
   --blue: #328cf0;
+  --sun: #f4a340;       /* Adventure Van Life amber */
   --font-num: "DIN Alternate", "DIN Next LT Pro", "Bahnschrift", "Roboto Condensed", system-ui, sans-serif;
   --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --tabbar: 64px;
@@ -52,7 +53,10 @@ button:disabled { cursor: default; }
   border-bottom: 1px solid var(--track);
 }
 .top .who { flex: 1; min-width: 0; }
-.top h1 { margin: 0; font: 600 17px/1.2 var(--font-ui); letter-spacing: .01em; }
+.top .mark { width: 40px; height: 40px; flex: none; }
+.top h1 { margin: 0; font: 800 17px/1.15 var(--font-num); letter-spacing: .04em; text-transform: uppercase; }
+.top h1 span { color: var(--sun); font-weight: 600; letter-spacing: .18em; margin-left: 4px; }
+.maker { text-align: center; font-size: 11px; letter-spacing: .2em; text-transform: uppercase; color: var(--dim); margin-bottom: -8px; }
 .conn { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); flex: none; }
 .conn[data-s="ok"] .dot { background: var(--green); }
@@ -174,7 +178,7 @@ body.offline .view { opacity: .45; pointer-events: none; transition: opacity .3s
 .tab { height: var(--tabbar); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: var(--dim); font-size: 12px; font-weight: 600; letter-spacing: .04em; }
 .tab svg { width: 22px; height: 22px; }
 .tab[aria-selected="true"] { color: var(--text); }
-.tab[aria-selected="true"] svg { color: var(--red); }
+.tab[aria-selected="true"] svg { color: var(--sun); }
 .tab .badge { font: 500 11px var(--font-num); color: var(--dim); letter-spacing: 0; }
 
 .toast {
@@ -198,8 +202,9 @@ body.offline .view { opacity: .45; pointer-events: none; transition: opacity .3s
 </style>
 
 <header class="top">
+  <!--avl-mark--><svg class="mark" viewBox="0 0 100 100" aria-hidden="true"><defs><clipPath id="avl-c1"><circle cx="50" cy="50" r="46"/></clipPath></defs> <circle cx="50" cy="50" r="48" fill="#123b37"/> <g clip-path="url(#avl-c1)"> <circle cx="66" cy="38" r="15" fill="#f4a340"/> <path d="M-2 76 L24 42 L38 57 L55 30 L79 61 L102 46 V102 H-2 Z" fill="#2d6e62"/> <path d="M55 30 L48.5 39.5 L53 37.5 L56 41.5 L61 37.5 Z" fill="#f3ede2"/> <path d="M-2 82 Q28 66 58 77 T102 74 V102 H-2 Z" fill="#4c9b85"/> </g> <path d="M28 56 H67 Q71 56 73 59 L80 69 Q82 71.5 82 75 V81 Q82 84 79 84 H27 Q24 84 24 81 V60 Q24 56 28 56 Z" fill="#f3ede2"/> <path d="M69.5 60 L76.5 70 H69.5 Z" fill="#123b37"/> <rect x="29" y="61" width="15" height="8" rx="1.6" fill="#123b37"/> <rect x="48" y="61" width="16" height="8" rx="1.6" fill="#123b37"/> <rect x="24" y="74" width="58" height="3.2" fill="#f4a340"/> <circle cx="35" cy="85" r="6.2" fill="#0a0d12" stroke="#f3ede2" stroke-width="2.2"/> <circle cx="70" cy="85" r="6.2" fill="#0a0d12" stroke="#f3ede2" stroke-width="2.2"/></svg><!--/avl-mark-->
   <div class="who">
-    <h1 id="title">Cabin Control</h1>
+    <h1 id="title">Adventure<span>Van Life</span></h1>
     <div class="conn" id="conn" data-s="demo"><i class="dot"></i><span id="connText"></span></div>
   </div>
   <div class="volt" id="volt">12.7<small>V</small></div>
@@ -208,6 +213,7 @@ body.offline .view { opacity: .45; pointer-events: none; transition: opacity .3s
 <main>
   <section class="view" id="v-heat" aria-labelledby="tab-heat">
     <div class="demo" id="demoNote" hidden></div>
+    <div class="maker">Autoterm heater</div>
     <div class="gauge">
       <svg id="gsvg" viewBox="0 0 300 250" aria-hidden="true"></svg>
       <div class="g-center">

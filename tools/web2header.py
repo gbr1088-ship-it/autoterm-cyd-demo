@@ -27,7 +27,7 @@ HEAD = """<!doctype html>
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Cabin">
+<meta name="apple-mobile-web-app-title" content="Van Life">
 <meta name="theme-color" content="#0a0d12">
 <link rel="icon" href="/icon.png">
 <link rel="apple-touch-icon" href="/icon.png">
@@ -36,8 +36,8 @@ HEAD = """<!doctype html>
 """
 
 MANIFEST = {
-    "name": "Cabin Control",
-    "short_name": "Cabin",
+    "name": "Adventure Van Life",
+    "short_name": "Van Life",
     "start_url": "/",
     "display": "standalone",
     "background_color": "#0a0d12",

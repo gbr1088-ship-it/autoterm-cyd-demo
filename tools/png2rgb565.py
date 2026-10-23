@@ -5,6 +5,8 @@
     python tools/png2rgb565.py autoterm_logo.png
     python tools/png2rgb565.py autoterm_logo.png --max 280 120 --small-max 100 20
     python tools/png2rgb565.py logo_with_tagline.png --small-image logo_plain.png
+    python tools/png2rgb565.py assets/avl_logo.png --small-image assets/avl_logo_small.png \
+        --small-max 80 22 --name avl_logo --out src/avl_logo.h
 
 Two copies are written: a large one for the splash screen (bg --bg) and a
 small one for the header bar (bg --small-bg). Transparent pixels are filled
@@ -49,6 +51,7 @@ ap.add_argument("--max", nargs=2, type=int, default=[280, 130], metavar=("W", "H
 ap.add_argument("--small-max", nargs=2, type=int, default=[110, 22], metavar=("W", "H"))
 ap.add_argument("--bg", default="0x0862", help="RGB565 splash background (C_BG)")
 ap.add_argument("--small-bg", default="0x10E4", help="RGB565 header background (C_PANEL)")
+ap.add_argument("--name", default="logo", help="names in the header: <name>_bitmap, <NAME>_W, ...")
 ap.add_argument("--out", default=str(Path(__file__).resolve().parent.parent / "src" / "logo.h"))
 a = ap.parse_args()
 
@@ -59,6 +62,6 @@ small = convert(small_src, a.small_max, int(a.small_bg, 16))
 
 with open(a.out, "w") as f:
     f.write("#pragma once\n#include <pgmspace.h>\n\n")
-    emit(f, "logo_bitmap", "LOGO", *big)
-    emit(f, "logo_small_bitmap", "LOGO_SMALL", *small)
+    emit(f, f"{a.name}_bitmap", a.name.upper(), *big)
+    emit(f, f"{a.name}_small_bitmap", f"{a.name.upper()}_SMALL", *small)
 print(f"wrote {a.out} (splash {big[0][0]}x{big[0][1]}, header {small[0][0]}x{small[0][1]})")

@@ -23,8 +23,8 @@ This is a demo controller UI for an Autoterm (Planar) diesel heater. The heater 
 - The on-board RGB LED is red while heating and blue while ventilating or cooling down.
 
 ## Phone app
-Tap **PHONE** on the home page and switch it **ON**. The screen opens its own WiFi network (`CABIN-xxxx`, with a password) and shows a QR code for joining it.
-1. Scan the QR code with the phone's camera, or join `CABIN-xxxx` by hand with the password on the screen.
+Tap **PHONE** on the home page and switch it **ON**. The screen opens its own WiFi network (`AVL-xxxx`, with a password) and shows a QR code for joining it.
+1. Scan the QR code with the phone's camera, or join `AVL-xxxx` by hand with the password on the screen.
 2. Open **http://192.168.4.1** in Safari or Chrome. Then use *Add to Home Screen* (Share menu on iPhone, ⋮ menu on Android) and it opens like an app from then on.
 
 The app shows the cabin gauge and heater state, and it can start and stop the heater, change mode and setpoint, and switch the lights, water pump and manual bilge run. It follows the screen's language. The windlass shows its chain count but runs only from the main screen, where you can see the bow.
@@ -34,7 +34,12 @@ The app shows the cabin gauge and heater state, and it can start and stop the he
 - Only the main screen (or a screen with LINK set to OFF) hosts the app. The network shares the ESP-NOW channel, so a second screen keeps working.
 - The app lives in `web/app.html`. After editing it, run `python tools/web2header.py` to rebuild `src/webapp.h`. Opened straight from disk, the page runs a demo with a simulated heater.
 
-## Logo
+## Adventure Van Life branding
+The splash screen, the header on every page but the heater's, the phone app and the `avl` screensaver use the Adventure Van Life logo. The heater page keeps the Autoterm logo. The logo is drawn in code by `tools/avl_logo.py` (Barlow Condensed font in `assets/fonts`, SIL Open Font License). To change it, edit that script and run it, then the three commands it prints. The masters are `assets/avl_logo.svg` and `assets/avl_mark.svg`.
+
+Firmware versions (they differ only in the screensaver): `pio run -e avl -t upload` (default), `-e kolex`, `-e beneteau`.
+
+## Autoterm logo
 `src/logo.h` is generated from the artwork in `assets/`, which was taken from Autoterm's logo PDF. To regenerate it, or to swap in other artwork:
 ```
 pip install pillow
