@@ -12,9 +12,9 @@ This is a demo controller UI for an Autoterm (Planar) diesel heater. The heater 
    If the upload won't start, hold **BOOT** and tap **RST**.
 
 ## Screens
-- **Splash**: the Autoterm logo fades in, followed by a loading bar.
+- **Splash**: the Adventure Van Life logo fades in, followed by a loading bar.
 - **Main**:
-  - Header: the small Autoterm logo, a coloured state pill and the supply voltage.
+  - Header: the word AUTOTERM, a coloured state pill and the supply voltage.
   - Gauge: a curved cabin-temperature gauge that sweeps from blue to red. In TEMP mode it also shows a setpoint marker.
   - Inside the gauge: the temperature, the setpoint, and an animated flame or fan. Fan rpm and heat output sit underneath.
   - Buttons: + and − (hold to repeat), and a round power button that glows green when stopped, red when running and grey while cooling down.
@@ -35,17 +35,12 @@ The app shows the cabin gauge and heater state, and it can start and stop the he
 - The app lives in `web/app.html`. After editing it, run `python tools/web2header.py` to rebuild `src/webapp.h`. Opened straight from disk, the page runs a demo with a simulated heater.
 
 ## Adventure Van Life branding
-The splash screen, the header on every page but the heater's, the phone app and the `avl` screensaver use the Adventure Van Life logo. The heater page keeps the Autoterm logo. The artwork is `assets/avl_logo_original.jpg`. `tools/avl_logo.py` makes every copy from it: the orange tile for the splash and the phone, the lettering in orange for the dark header bar, and the screensaver. To change the logo, replace that file, run the script, then run the three commands it prints.
+The splash screen, the header on every page but the heater's, the phone app and the `avl` screensaver use the Adventure Van Life logo. The heater page's header says AUTOTERM in plain text. The artwork is `assets/avl_logo_original.jpg`. `tools/avl_logo.py` makes every copy from it: the orange tile for the splash and the phone, the lettering in orange for the dark header bar, and the screensaver. To change the logo, replace that file, run the script, then run the three commands it prints.
 
 Firmware versions (they differ only in the screensaver): `pio run -e avl -t upload` (default), `-e kolex`, `-e beneteau`.
 
-## Autoterm logo
-`src/logo.h` is generated from the artwork in `assets/`, which was taken from Autoterm's logo PDF. To regenerate it, or to swap in other artwork:
-```
-pip install pillow
-python tools/png2rgb565.py assets/autoterm_logo.png --small-image assets/autoterm_logo_plain.png
-```
-If you delete `src/logo.h`, the firmware falls back to a drawn stand-in logo.
+## No Autoterm artwork
+Autoterm's logo is copyrighted, so the firmware and the phone app don't contain it. Only the name "Autoterm" appears, as plain text on the heater page.
 
 ## Cabin temperature sensor (DS18B20)
 Plug a DS18B20 probe into the **CN1** header and the gauge shows the real temperature. With no probe connected, the temperature is simulated. The board checks for the probe every 5 s, so you can plug it in while it's running.

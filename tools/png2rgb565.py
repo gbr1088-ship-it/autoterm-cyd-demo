@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
-"""Convert a PNG/JPG logo into src/logo.h (RGB565) for the firmware.
+"""Convert a PNG/JPG logo into a header of RGB565 bitmaps for the firmware.
 
     pip install pillow
-    python tools/png2rgb565.py autoterm_logo.png
-    python tools/png2rgb565.py autoterm_logo.png --max 280 120 --small-max 100 20
+    python tools/png2rgb565.py logo.png --max 280 120 --small-max 100 20 --name logo --out src/logo.h
     python tools/png2rgb565.py logo_with_tagline.png --small-image logo_plain.png
     python tools/png2rgb565.py assets/avl_logo.png --small-image assets/avl_logo_small.png \
         --max 150 150 --small-max 80 24 --name avl_logo --out src/avl_logo.h
 
 Two copies are written: a large one for the splash screen (bg --bg) and a
 small one for the header bar (bg --small-bg). Transparent pixels are filled
-with those colours. Once src/logo.h exists the firmware uses it automatically.
+with those colours.
 """
 import argparse
 from pathlib import Path
