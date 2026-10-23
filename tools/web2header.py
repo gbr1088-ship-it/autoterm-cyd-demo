@@ -1,4 +1,6 @@
-"""Packs the phone app (web/app.html + web/icon.png) into src/webapp.h.
+"""Packs the phone app (web/app.html + web/icon.png) into src/webapp.h, and
+writes demo/adventure-van-life-demo.html, a single file to send to people:
+it opens in any browser and runs the app with a simulated heater.
 
 The screen serves this page to phones that join its WiFi. Run it after
 changing anything in web/:
@@ -10,14 +12,17 @@ script) so it can also be opened straight from disk as a demo. This script
 wraps it in a full document with the phone "add to home screen" settings,
 gzips it and writes it out as C arrays.
 """
+import base64
 import gzip
 import json
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 APP = ROOT / "web" / "app.html"
 ICON = ROOT / "web" / "icon.png"
 OUT = ROOT / "src" / "webapp.h"
+DEMO = ROOT / "demo" / "adventure-van-life-demo.html"
 
 HEAD = """<!doctype html>
 <html lang="en">
@@ -28,7 +33,8 @@ HEAD = """<!doctype html>
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Van Life">
-<meta name="theme-color" content="#0a0d12">
+<meta name="theme-color" content="#110d0b">
+<meta name="copyright" content="© AVL 2026">
 <link rel="icon" href="/icon.png">
 <link rel="apple-touch-icon" href="/icon.png">
 <link rel="manifest" href="/manifest.json">
@@ -40,8 +46,8 @@ MANIFEST = {
     "short_name": "Van Life",
     "start_url": "/",
     "display": "standalone",
-    "background_color": "#0a0d12",
-    "theme_color": "#0a0d12",
+    "background_color": "#110d0b",
+    "theme_color": "#110d0b",
     "icons": [{"src": "/icon.png", "sizes": "180x180", "type": "image/png"}],
 }
 
@@ -54,7 +60,8 @@ def c_array(name, data):
 
 
 def main():
-    app = APP.read_text(encoding="utf-8")
+    # tags only the preview tool reads don't belong in the real page
+    app = re.sub(r'<meta name="claude:[^>]*>\n?', "", APP.read_text(encoding="utf-8"))
     # everything before the first <header> belongs in <head>
     split = app.index("<header")
     page = HEAD + app[:split] + "</head>\n<body>\n" + app[split:] + "</body>\n</html>\n"
@@ -70,6 +77,13 @@ def main():
         + 'const char WEBAPP_MANIFEST[] PROGMEM = R"json(' + json.dumps(MANIFEST) + ')json";\n',
         encoding="utf-8")
     print(f"{OUT.relative_to(ROOT)}: page {len(page)} bytes -> {len(html_gz)} gzipped, icon {len(icon)} bytes")
+
+    # the shareable demo: same page, icon inlined, no files to serve alongside it
+    icon_uri = "data:image/png;base64," + base64.b64encode(icon).decode()
+    demo = page.replace('href="/icon.png"', f'href="{icon_uri}"').replace('<link rel="manifest" href="/manifest.json">\n', "")
+    DEMO.parent.mkdir(exist_ok=True)
+    DEMO.write_text(demo, encoding="utf-8")
+    print(f"{DEMO.relative_to(ROOT)}: {len(demo)} bytes")
 
 
 if __name__ == "__main__":

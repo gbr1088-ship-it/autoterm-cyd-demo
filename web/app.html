@@ -5,19 +5,22 @@
    One dark look on purpose: it matches the screen and is easy on the eyes at night. */
 :root {
   color-scheme: dark;
-  --bg: #0a0d12;        /* screen C_BG */
-  --panel: #161c24;     /* C_PANEL */
-  --raised: #222a36;    /* C_RAISED */
-  --track: #1e2530;     /* C_TRACK */
-  --line: #2c3542;
-  --text: #f0f4f8;
-  --dim: #828ea0;
-  --red: #e4002b;       /* heater red */
-  --orange: #ff8020;
+  /* warm charcoal neutrals under the logo's orange; red, green and blue stay
+     for stop, start and ventilation so they keep their meaning */
+  --bg: #110d0b;        /* screen C_BG */
+  --panel: #1e1814;     /* C_PANEL */
+  --raised: #2c241e;    /* C_RAISED */
+  --track: #261f1a;     /* C_TRACK */
+  --line: #3a2f27;
+  --text: #f8f2ec;
+  --dim: #a08f84;
+  --sun: #ff914c;       /* Adventure Van Life orange */
+  --peach: #fcb68c;     /* the logo's glow */
+  --orange: var(--sun);
+  --red: #e4002b;
   --yellow: #ffd640;
   --green: #28c864;
   --blue: #328cf0;
-  --sun: #ff914c;       /* Adventure Van Life orange */
   --font-num: "DIN Alternate", "DIN Next LT Pro", "Bahnschrift", "Roboto Condensed", system-ui, sans-serif;
   --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --tabbar: 64px;
@@ -39,7 +42,7 @@ body::before {
   z-index: 10; background: var(--bg);
 }
 button { font: inherit; color: inherit; border: 0; background: none; cursor: pointer; touch-action: manipulation; }
-button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+button:focus-visible { outline: 2px solid var(--sun); outline-offset: 2px; }
 button:disabled { cursor: default; }
 
 /* ---------------------------------------------------------------- header */
@@ -50,7 +53,7 @@ button:disabled { cursor: default; }
   padding-left: max(16px, env(safe-area-inset-left, 0px));
   padding-right: max(16px, env(safe-area-inset-right, 0px));
   background: var(--bg);
-  border-bottom: 1px solid var(--track);
+  border-bottom: 1px solid color-mix(in srgb, var(--sun) 30%, var(--track));
 }
 .top .who { flex: 1; min-width: 0; }
 .top .mark { width: 40px; height: 40px; flex: none; display: block; }
@@ -61,7 +64,7 @@ button:disabled { cursor: default; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); flex: none; }
 .conn[data-s="ok"] .dot { background: var(--green); }
 .conn[data-s="lost"] .dot { background: var(--red); animation: blink 1s steps(2) infinite; }
-.conn[data-s="demo"] .dot { background: var(--yellow); }
+.conn[data-s="demo"] .dot { background: var(--sun); }
 .volt { font: 600 15px var(--font-num); font-variant-numeric: tabular-nums; padding: 6px 10px; border-radius: 999px; background: var(--panel); color: var(--text); }
 .volt small { color: var(--dim); font-weight: 400; margin-left: 1px; }
 .volt.low { color: var(--red); }
@@ -159,7 +162,7 @@ body.offline .view { opacity: .45; pointer-events: none; transition: opacity .3s
 .chain b { font: 600 44px/1 var(--font-num); font-variant-numeric: tabular-nums; }
 .chain small { color: var(--dim); font-size: 15px; }
 .chainbar { position: relative; height: 10px; border-radius: 5px; background: var(--track); overflow: hidden; }
-.chainbar i { position: absolute; inset: 0 auto 0 0; background: var(--blue); border-radius: 5px; transition: width .25s linear; }
+.chainbar i { position: absolute; inset: 0 auto 0 0; background: linear-gradient(90deg, var(--peach), var(--sun)); border-radius: 5px; transition: width .25s linear; }
 .scale { display: flex; justify-content: space-between; font: 12px var(--font-num); color: var(--dim); margin-top: -6px; }
 .lock { display: flex; gap: 10px; align-items: flex-start; font-size: 13px; color: var(--dim); border-top: 1px solid var(--track); padding-top: 12px; }
 .lock svg { width: 18px; height: 18px; flex: none; margin-top: 1px; }
@@ -178,7 +181,11 @@ body.offline .view { opacity: .45; pointer-events: none; transition: opacity .3s
 .tab { height: var(--tabbar); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: var(--dim); font-size: 12px; font-weight: 600; letter-spacing: .04em; }
 .tab svg { width: 22px; height: 22px; }
 .tab[aria-selected="true"] { color: var(--text); }
+.tab[aria-selected="true"] { color: var(--sun); }
 .tab[aria-selected="true"] svg { color: var(--sun); }
+.tab { position: relative; }
+.tab[aria-selected="true"]::before { content: ""; position: absolute; top: -1px; left: 30%; right: 30%; height: 3px; border-radius: 0 0 3px 3px; background: var(--sun); }
+.legal { text-align: center; font-size: 12px; color: var(--dim); letter-spacing: .06em; padding-top: 8px; }
 .tab .badge { font: 500 11px var(--font-num); color: var(--dim); letter-spacing: 0; }
 
 .toast {
@@ -188,8 +195,8 @@ body.offline .view { opacity: .45; pointer-events: none; transition: opacity .3s
   padding: 10px 16px; border-radius: 12px; font-size: 14px; z-index: 7;
   max-width: calc(100% - 32px); text-align: center;
 }
-.demo { background: color-mix(in srgb, var(--yellow) 10%, var(--panel)); border: 1px solid color-mix(in srgb, var(--yellow) 35%, transparent); border-radius: 12px; padding: 10px 12px; font-size: 13px; color: var(--text); }
-.demo b { color: var(--yellow); font-weight: 600; }
+.demo { background: color-mix(in srgb, var(--sun) 12%, var(--panel)); border: 1px solid color-mix(in srgb, var(--sun) 40%, transparent); border-radius: 12px; padding: 10px 12px; font-size: 13px; color: var(--text); }
+.demo b { color: var(--sun); font-weight: 600; }
 
 @keyframes blink { 50% { opacity: .35; } }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -256,6 +263,7 @@ body.offline .view { opacity: .45; pointer-events: none; transition: opacity .3s
       <div class="lock"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg><span id="lockText"></span></div>
     </div>
   </section>
+  <footer class="legal">© AVL 2026</footer>
 </main>
 
 <nav class="tabs" role="tablist">
@@ -363,11 +371,11 @@ function arcPath(a, b, r) {
   const [x0, y0] = polar(a, r), [x1, y1] = polar(b, r);
   return `M${x0.toFixed(2)} ${y0.toFixed(2)}A${r} ${r} 0 ${b - a > 180 ? 1 : 0} 1 ${x1.toFixed(2)} ${y1.toFixed(2)}`;
 }
-// cold blue -> orange -> red, like heatColor() on the screen
+// the logo's peach glow -> its orange -> red, like heatColor() on the screen
 function heatColor(f) {
   const mix = (c0, c1, k) => c0.map((v, i) => Math.round(v + (c1[i] - v) * k));
-  const blue = [50, 140, 240], orange = [255, 128, 32], red = [228, 0, 43];
-  const c = f < .5 ? mix(blue, orange, f * 2) : mix(orange, red, (f - .5) * 2);
+  const peach = [252, 182, 140], orange = [255, 145, 76], red = [228, 0, 43];
+  const c = f < .5 ? mix(peach, orange, f * 2) : mix(orange, red, (f - .5) * 2);
   return `rgb(${c})`;
 }
 const segEls = [];

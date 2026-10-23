@@ -33,6 +33,7 @@ The app shows the cabin gauge and heater state, and it can start and stop the he
 - **NEW PASSWORD** on the phone page drops every phone that knew the old one.
 - Only the main screen (or a screen with LINK set to OFF) hosts the app. The network shares the ESP-NOW channel, so a second screen keeps working.
 - The app lives in `web/app.html`. After editing it, run `python tools/web2header.py` to rebuild `src/webapp.h`. Opened straight from disk, the page runs a demo with a simulated heater.
+- **Demo to send to people:** `demo/adventure-van-life-demo.html` is the whole app in one file (also rebuilt by `web2header.py`). It opens in any browser and runs with a simulated heater. To share it as a link, upload it to a static host, e.g. drag it onto https://app.netlify.com/drop.
 
 ## Adventure Van Life branding
 The splash screen, the header on every page but the heater's, the phone app and the `avl` screensaver use the Adventure Van Life logo. The heater page's header says AUTOTERM in plain text. The artwork is `assets/avl_logo_original.jpg`. `tools/avl_logo.py` makes every copy from it: the orange tile for the splash and the phone, the lettering in orange for the dark header bar, and the screensaver. To change the logo, replace that file, run the script, then run the three commands it prints.

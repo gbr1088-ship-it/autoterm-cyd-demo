@@ -102,15 +102,20 @@ constexpr uint16_t rgb(uint8_t r, uint8_t g, uint8_t b) {
   return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
 }
 
-const uint16_t C_BG     = rgb(10, 13, 18);
-const uint16_t C_PANEL  = rgb(22, 28, 36);
-const uint16_t C_RAISED = rgb(34, 42, 54);
-const uint16_t C_PRESS  = rgb(58, 70, 88);
-const uint16_t C_TRACK  = rgb(30, 37, 48);
-const uint16_t C_TEXT   = rgb(240, 244, 248);
-const uint16_t C_DIM    = rgb(130, 142, 160);
-const uint16_t C_RED    = rgb(228, 0, 43);   // Autoterm red (Pantone 185)
-const uint16_t C_ORANGE = rgb(255, 128, 32);
+// Warm charcoal neutrals under the Adventure Van Life orange. Red, green and
+// blue keep their meanings (stop, start, ventilation). The phone app uses the
+// same values (web/app.html), and the logo bitmaps are filled with C_BG and
+// C_PANEL (tools/avl_logo.py), so change those together.
+const uint16_t C_BG     = rgb(17, 13, 11);
+const uint16_t C_PANEL  = rgb(30, 24, 20);
+const uint16_t C_RAISED = rgb(44, 36, 30);
+const uint16_t C_PRESS  = rgb(72, 58, 48);
+const uint16_t C_TRACK  = rgb(38, 31, 26);
+const uint16_t C_TEXT   = rgb(248, 242, 236);
+const uint16_t C_DIM    = rgb(160, 143, 132);
+const uint16_t C_RED    = rgb(228, 0, 43);
+const uint16_t C_ORANGE = rgb(255, 145, 76);  // the logo's orange
+const uint16_t C_PEACH  = rgb(252, 182, 140); // the logo's lighter glow
 const uint16_t C_YELLOW = rgb(255, 214, 64);
 const uint16_t C_GREEN  = rgb(40, 200, 100);
 const uint16_t C_BLUE   = rgb(50, 140, 240);
@@ -397,7 +402,7 @@ void fadeBacklight(int from, int to, int ms) {
 // cold blue -> orange -> red along the gauge
 uint16_t heatColor(float f) {
   f = constrain(f, 0.0f, 1.0f);
-  if (f < 0.5f) return tft.alphaBlend(f * 2 * 255, C_ORANGE, C_BLUE);
+  if (f < 0.5f) return tft.alphaBlend(f * 2 * 255, C_ORANGE, C_PEACH);
   return tft.alphaBlend((f - 0.5f) * 2 * 255, C_RED, C_ORANGE);
 }
 
@@ -440,13 +445,14 @@ void splash() {
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(C_DIM, C_BG);
   tft.drawString(tr(T_SPLASH), 160, 180, 2);
+  tft.drawString("Copyright AVL 2026", 160, 228, 1);
 
   fadeBacklight(0, backlightLevel(), 500);
 
   // progress bar in the logo's orange, lightening like its glow
   tft.fillSmoothRoundRect(60, 202, 200, 8, 4, C_PANEL, C_BG);
   for (int i = 8; i <= 200; i += 4) {
-    tft.fillSmoothRoundRect(60, 202, i, 8, 4, tft.alphaBlend(i * 255 / 200, rgb(252, 182, 140), rgb(255, 145, 76)), C_BG);
+    tft.fillSmoothRoundRect(60, 202, i, 8, 4, tft.alphaBlend(i * 255 / 200, C_PEACH, C_ORANGE), C_BG);
     delay(16);
   }
   delay(400);
@@ -837,7 +843,7 @@ void drawGear(int cx, int cy, uint16_t col, uint16_t bg) {
 void drawHomeRolePill() {
   if (role == ROLE_OFF) return;
   if (showNoLink()) drawPill(tr(T_NO_LINK), C_RED);
-  else if (isRemote()) drawPill(tr(T_ROLE_REMOTE), C_BLUE);
+  else if (isRemote()) drawPill(tr(T_ROLE_REMOTE), C_ORANGE);
   else drawPill(tr(T_ROLE_MAIN), C_GREEN);
 }
 
@@ -942,7 +948,7 @@ void drawWinchStatus() {
 
 void drawUtilPill() {
   if (showNoLink()) drawPill(tr(T_NO_LINK), C_RED);
-  else drawPill(tr(T_DEMO_RELAYS), C_BLUE);
+  else drawPill(tr(T_DEMO_RELAYS), C_ORANGE);
 }
 
 void drawUtilPage() {
@@ -1078,7 +1084,7 @@ void drawSaverClock(bool force = false) {
   const char *month = MONTH_NAME[lang][t.tm_mon];
   if (lang == LANG_ES) snprintf(buf, sizeof buf, "%d de %s de %d", t.tm_mday, month, t.tm_year + 1900);
   else snprintf(buf, sizeof buf, "%d %s %d", t.tm_mday, month, t.tm_year + 1900);
-  saverSpr.setTextColor(img.light ? rgb(70, 80, 95) : rgb(205, 210, 218));
+  saverSpr.setTextColor(img.light ? rgb(80, 64, 54) : rgb(222, 212, 204));
   saverSpr.drawString(buf, 308, 38, 2);
   saverSpr.pushSprite(0, 0);
 }
@@ -1135,15 +1141,15 @@ void drawRow(int i, Txt label) {
   tft.drawString(tr(label), 16, ROW_Y[i] + ROW_H / 2, 2);
 }
 
-// three side-by-side choices on the right of a row, the current one in blue
+// three side-by-side choices on the right of a row, the current one in orange
 void drawChoices(const Button *btns, const char *const *labels, int current) {
   tft.setTextDatum(MC_DATUM);
   for (int i = 0; i < 3; i++) {
     const Button &b = btns[i];
     bool on = i == current;
-    uint16_t fill = on ? C_BLUE : C_RAISED;
+    uint16_t fill = on ? C_ORANGE : C_RAISED;
     tft.fillSmoothRoundRect(b.x, b.y, b.w, b.h, b.h / 2, fill, C_PANEL);
-    tft.setTextColor(on ? C_TEXT : C_DIM, fill);
+    tft.setTextColor(on ? C_BG : C_DIM, fill);
     tft.drawString(labels[i], b.x + b.w / 2, b.y + b.h / 2, 2);
   }
 }
@@ -1742,7 +1748,7 @@ void drawPhoneButton() {
   tft.setFreeFont(&FreeSansBold9pt7b);
   int w = tft.textWidth(tr(T_PHONE)) + 20;
   int x = b.x + (b.w - w) / 2;
-  drawPhoneIcon(x + 5, b.y + b.h / 2, 20, !phoneUp ? C_DIM : phoneClients ? C_GREEN : C_BLUE, C_PANEL);
+  drawPhoneIcon(x + 5, b.y + b.h / 2, 20, !phoneUp ? C_DIM : phoneClients ? C_GREEN : C_ORANGE, C_PANEL);
   tft.setTextDatum(ML_DATUM);
   tft.setTextColor(C_TEXT);
   tft.drawString(tr(T_PHONE), x + 18, b.y + b.h / 2);
@@ -1833,7 +1839,7 @@ void drawPhoneStatus() {
 void drawPhonePage() {
   tft.fillScreen(C_BG);
   drawHeader(true);
-  drawPill(tr(T_PHONE_APP), C_BLUE);
+  drawPill(tr(T_PHONE_APP), C_ORANGE);
   drawPhoneQr();
   if (phoneAllowed()) drawPhoneSwitch();
   drawPhoneDetails();
@@ -1932,7 +1938,7 @@ bool wifiConnect() {
 void drawWifiPage() {
   tft.fillScreen(C_BG);
   drawHeader(false);
-  drawPill(tr(T_WIFI), C_BLUE);
+  drawPill(tr(T_WIFI), C_ORANGE);
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(C_TEXT, C_BG);
   tft.drawString(tr(T_WIFI_HELP1), 160, 54, 2);
