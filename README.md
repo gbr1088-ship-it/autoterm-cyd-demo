@@ -35,7 +35,7 @@ The app shows the cabin gauge and heater state, and it can start and stop the he
 - The app lives in `web/app.html`. After editing it, run `python tools/web2header.py` to rebuild `src/webapp.h`. Opened straight from disk, the page runs a demo with a simulated heater.
 
 ## Adventure Van Life branding
-The splash screen, the header on every page but the heater's, the phone app and the `avl` screensaver use the Adventure Van Life logo. The heater page keeps the Autoterm logo. The logo is drawn in code by `tools/avl_logo.py` (Barlow Condensed font in `assets/fonts`, SIL Open Font License). To change it, edit that script and run it, then the three commands it prints. The masters are `assets/avl_logo.svg` and `assets/avl_mark.svg`.
+The splash screen, the header on every page but the heater's, the phone app and the `avl` screensaver use the Adventure Van Life logo. The heater page keeps the Autoterm logo. The artwork is `assets/avl_logo_original.jpg`. `tools/avl_logo.py` makes every copy from it: the orange tile for the splash and the phone, the lettering in orange for the dark header bar, and the screensaver. To change the logo, replace that file, run the script, then run the three commands it prints.
 
 Firmware versions (they differ only in the screensaver): `pio run -e avl -t upload` (default), `-e kolex`, `-e beneteau`.
 

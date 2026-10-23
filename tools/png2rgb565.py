@@ -6,7 +6,7 @@
     python tools/png2rgb565.py autoterm_logo.png --max 280 120 --small-max 100 20
     python tools/png2rgb565.py logo_with_tagline.png --small-image logo_plain.png
     python tools/png2rgb565.py assets/avl_logo.png --small-image assets/avl_logo_small.png \
-        --small-max 80 22 --name avl_logo --out src/avl_logo.h
+        --max 150 150 --small-max 80 24 --name avl_logo --out src/avl_logo.h
 
 Two copies are written: a large one for the splash screen (bg --bg) and a
 small one for the header bar (bg --small-bg). Transparent pixels are filled
