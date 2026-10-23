@@ -22,6 +22,18 @@ This is a demo controller UI for an Autoterm (Planar) diesel heater. The heater 
 - States run OFF → STARTING (12 s glow plug) → HEATING → COOLING DOWN (10 s purge) → OFF.
 - The on-board RGB LED is red while heating and blue while ventilating or cooling down.
 
+## Phone app
+Tap **PHONE** on the home page and switch it **ON**. The screen opens its own WiFi network (`CABIN-xxxx`, with a password) and shows a QR code for joining it.
+1. Scan the QR code with the phone's camera, or join `CABIN-xxxx` by hand with the password on the screen.
+2. Open **http://192.168.4.1** in Safari or Chrome. Then use *Add to Home Screen* (Share menu on iPhone, ⋮ menu on Android) and it opens like an app from then on.
+
+The app shows the cabin gauge and heater state, and it can start and stop the heater, change mode and setpoint, and switch the lights, water pump and manual bilge run. It follows the screen's language. The windlass shows its chain count but runs only from the main screen, where you can see the bow.
+
+- No internet or router is needed, and phones may say the network has no internet. That's expected: stay connected.
+- **NEW PASSWORD** on the phone page drops every phone that knew the old one.
+- Only the main screen (or a screen with LINK set to OFF) hosts the app. The network shares the ESP-NOW channel, so a second screen keeps working.
+- The app lives in `web/app.html`. After editing it, run `python tools/web2header.py` to rebuild `src/webapp.h`. Opened straight from disk, the page runs a demo with a simulated heater.
+
 ## Logo
 `src/logo.h` is generated from the artwork in `assets/`, which was taken from Autoterm's logo PDF. To regenerate it, or to swap in other artwork:
 ```

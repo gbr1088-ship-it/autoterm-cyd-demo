@@ -10,6 +10,7 @@ The README covers how to build and use the project. This file covers **where thi
 - **Redesigned UI and real logo.** The redesign added the arc gauge, the round power button and the pill mode selector, plus the real Autoterm logo. Confirmed working on the board.
 - **Probe not detected yet.** On the board the log shows `no DS18B20 on IO22 (bus presence pulse: no)`: nothing answers on the pin, so it's wiring (resistor, CN1 vs P3, data wire). Waiting on the user to check.
 - **Home page + Utilities page (demo).** After the splash a home page picks Heating or Utilities. Utilities has light, water pump and bilge toggles and a hold-to-run windlass, all simulated. Tested on the board; the header home button was enlarged after the user found it too small.
+- **Phone app (new, untested on the boards):** the screen hosts a phone web app over its own WiFi. Heater and switches can be controlled from it; the windlass is status-only. Details under "Phone app" below.
 - **Repo:** `gbr1088-ship-it/autoterm-cyd-demo` (private). Pushes are done from the laptop.
 - **Laptop setup (Windows):** a local Claude session now runs on the laptop and builds/flashes over USB (board on **COM4**, CH340). Python 3.12 is in `%LOCALAPPDATA%\Programs\Python\Python312`; run PlatformIO as `python -m platformio`. Git isn't on PATH: use GitHub Desktop's copy in `%LOCALAPPDATA%\GitHubDesktop\app-*\resources\app\git\cmd`.
 
@@ -46,6 +47,12 @@ The README covers how to build and use the project. This file covers **where thi
   - **Safety net:** a new version is "on trial" (NVS namespace `ota`); if it doesn't stay up 30 s three times running, `checkNewFirmware()` switches back to the previous slot. Arduino's own app rollback isn't enabled in this toolchain, so this replaces it.
   - **Layout:** `min_spiffs.csv`, two 1.9 MB app slots (about 550 KB free); NVS is at the same place as before, so settings survived the switch.
   - **Clock:** connecting to WiFi sets the time by NTP (UK time zone, `TIMEZONE`); it's still lost at power-off until the next WiFi use.
+- **Phone app (written 23 Oct 2026, compiled but not yet tried on the boards):**
+  - **What:** home page → PHONE → ON opens a WPA2 access point `CABIN-xxxx` (from the MAC, like `AUTOTERM-xxxx`) on `RADIO_CHANNEL`, so ESP-NOW keeps working alongside it. The phone page shows a WiFi-join QR code (the SDK's `esp_qrcode_*`, no extra library), the password (8 characters, made with `esp_random()` the first time, kept in NVS `ui/phonepw`) and `192.168.4.1`. NEW PASSWORD makes a fresh one and drops every phone. ON/OFF is kept in NVS `ui/phone`, off by default.
+  - **How:** `WebServer` on port 80 serves the gzipped page from `src/webapp.h`. `WebSocketsServer` (links2004/WebSockets 2.4.1) runs on port 81: the screen broadcasts its state as JSON every 250 ms and straight after a command (`phoneSendState()`), and the phone sends `power`, `mode N`, `adj ±1` or `toggle N`. These go through the same `onPowerPressed()` / `onModePressed()` / `onAdjust()` / `onToggle()` as the screen's own buttons, so every rule is the same. **No windlass from the phone**, for the same reason as on a remote.
+  - **Radio:** `phoneUp` means the AP is up. `wifiOff()` now puts the phone AP back, and `radioBegin()` leaves the mode alone while it's up. The WiFiManager setup portal needs port 80 and the AP, so `startWifiSetup()` closes the phone network and `stopWifiSetup()` reopens it. Update checks briefly move the radio to the boat network's channel, and phones reconnect afterwards. A remote screen never hosts the app (`phoneAllowed()`).
+  - **The page:** `web/app.html` holds only the page's content. `tools/web2header.py` wraps it in a full document (home-screen icon `web/icon.png`, manifest), gzips it (~11 KB) and writes `src/webapp.h`. Opened anywhere but from the screen, the page runs a JS copy of `simulate()` as a demo. The firmware grew by about 47 KB (72% of the slot).
+  - **To check on the boards:** the QR code scans, both screens keep their link while a phone is connected, the WiFi setup still works with the phone app on, and the labels fit (they were measured against the font tables, but not seen on the screen).
 - **Translations:** every on-screen string lives in `TXT[lang][Txt]` (plus `DAY_NAME` / `MONTH_NAME` for the screensaver date); use `tr(T_...)` for screen text and `trEn()` for the serial log. The fonts are ASCII only, so French and Spanish are written without accents. Labels were shortened to fit their boxes (e.g. "POMPE CALE", "SENTINA"); check the widths when adding text.
 - **Touch hold:** the XPT2046 reading drops out briefly while a finger is held, so gaps under 150 ms count as still held. Without this the windlass would stutter.
 - **Probe reading:** `pollSensor()` reads the DS18B20 without blocking. It starts a conversion and collects it a second later. It searches again every 5 s, and after 3 failed reads it falls back to the simulation. `simulate()` only changes `cabinTemp` while `sensorOk` is false.
@@ -132,6 +139,7 @@ The screen will also control lights, water pump, bilge pump and the anchor windl
 3. Add a demo/real switch, such as a long-press on the logo or a compile flag, so the simulation stays available.
 4. Show heater error codes on the screen.
 5. Bench test with the heater, with the original panel kept as a fallback.
-6. Once the user picks a relay board: write its ESP-NOW firmware and replace the `RELAY LINK` stubs with real commands, keep-alive and acknowledgements.
+6. Try the phone app on both boards (see the checklist under "Phone app").
+7. Once the user picks a relay board: write its ESP-NOW firmware and replace the `RELAY LINK` stubs with real commands, keep-alive and acknowledgements.
 
 **Safety:** never cut power to stop the heater, because it must run its cool-down purge. Fit a CO alarm in any heated space.

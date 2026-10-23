@@ -1,0 +1,633 @@
+<title>Cabin Control</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Phone remote for the cabin screen: one column, gauge first, controls under the thumb, tabs at the bottom.
+   One dark look on purpose: it matches the screen and is easy on the eyes at night. */
+:root {
+  color-scheme: dark;
+  --bg: #0a0d12;        /* screen C_BG */
+  --panel: #161c24;     /* C_PANEL */
+  --raised: #222a36;    /* C_RAISED */
+  --track: #1e2530;     /* C_TRACK */
+  --line: #2c3542;
+  --text: #f0f4f8;
+  --dim: #828ea0;
+  --red: #e4002b;       /* heater red */
+  --orange: #ff8020;
+  --yellow: #ffd640;
+  --green: #28c864;
+  --blue: #328cf0;
+  --font-num: "DIN Alternate", "DIN Next LT Pro", "Bahnschrift", "Roboto Condensed", system-ui, sans-serif;
+  --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --tabbar: 64px;
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.4 var(--font-ui);
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+body::before {
+  content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px);
+  z-index: 10; background: var(--bg);
+}
+button { font: inherit; color: inherit; border: 0; background: none; cursor: pointer; touch-action: manipulation; }
+button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+button:disabled { cursor: default; }
+
+/* ---------------------------------------------------------------- header */
+.top {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5;
+  display: flex; align-items: center; gap: 12px;
+  padding-block: 12px 10px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  background: var(--bg);
+  border-bottom: 1px solid var(--track);
+}
+.top .who { flex: 1; min-width: 0; }
+.top h1 { margin: 0; font: 600 17px/1.2 var(--font-ui); letter-spacing: .01em; }
+.conn { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); flex: none; }
+.conn[data-s="ok"] .dot { background: var(--green); }
+.conn[data-s="lost"] .dot { background: var(--red); animation: blink 1s steps(2) infinite; }
+.conn[data-s="demo"] .dot { background: var(--yellow); }
+.volt { font: 600 15px var(--font-num); font-variant-numeric: tabular-nums; padding: 6px 10px; border-radius: 999px; background: var(--panel); color: var(--text); }
+.volt small { color: var(--dim); font-weight: 400; margin-left: 1px; }
+.volt.low { color: var(--red); }
+
+main {
+  padding-block: 16px calc(var(--tabbar) + env(safe-area-inset-bottom, 0px) + 20px);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  max-width: 480px; margin: 0 auto;
+}
+.view { display: flex; flex-direction: column; gap: 14px; }
+body.offline .view { opacity: .45; pointer-events: none; transition: opacity .3s; }
+
+/* ---------------------------------------------------------------- gauge */
+.gauge { position: relative; width: 100%; max-width: 340px; margin: 0 auto; }
+.gauge svg { display: block; width: 100%; height: auto; }
+.g-center { position: absolute; left: 0; right: 0; top: 30%; text-align: center; pointer-events: none; }
+.g-icon { height: 30px; display: flex; justify-content: center; align-items: end; }
+.g-icon svg { width: 26px; height: 26px; }
+.g-temp { font: 600 64px/1 var(--font-num); font-variant-numeric: tabular-nums; letter-spacing: -.02em; margin-top: 2px; }
+.g-temp sup { font-size: 22px; font-weight: 500; color: var(--dim); vertical-align: 30px; margin-left: 2px; letter-spacing: 0; }
+.g-label { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); margin-top: 6px; }
+.g-label b { font-weight: 500; color: var(--text); }
+.pill {
+  position: absolute; left: 50%; bottom: 2%; transform: translateX(-50%);
+  display: inline-flex; align-items: center; gap: 8px; white-space: nowrap;
+  padding: 7px 14px; border-radius: 999px; background: var(--panel);
+  font: 600 12px var(--font-ui); letter-spacing: .12em; text-transform: uppercase;
+  border: 1px solid var(--line); color: var(--pc, var(--dim));
+}
+.pill .t { font: 500 13px var(--font-num); letter-spacing: 0; color: var(--dim); font-variant-numeric: tabular-nums; }
+.pill i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.stat { background: var(--panel); border-radius: 12px; padding: 10px 12px; min-width: 0; }
+.stat span { display: block; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stat b { font: 600 20px/1.3 var(--font-num); font-variant-numeric: tabular-nums; }
+.stat b small { font-size: 13px; color: var(--dim); font-weight: 400; margin-left: 2px; }
+
+/* ---------------------------------------------------------------- heater controls */
+.stepper { display: grid; grid-template-columns: 68px 1fr 68px; gap: 8px; align-items: stretch; }
+.adj {
+  height: 68px; border-radius: 16px; background: var(--raised);
+  display: grid; place-items: center; touch-action: none;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .06);
+}
+.adj svg { width: 26px; height: 26px; }
+.adj:active, .adj.held { background: #3a4658; }
+.adj:disabled { opacity: .35; }
+.setval { background: var(--panel); border-radius: 16px; display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 0; }
+.setval span { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--mc, var(--dim)); }
+.setval b { font: 600 30px/1.1 var(--font-num); font-variant-numeric: tabular-nums; }
+.setval b small { font-size: 15px; color: var(--dim); font-weight: 400; margin-left: 3px; }
+
+.modes { display: grid; grid-template-columns: repeat(3, 1fr); background: var(--panel); border-radius: 14px; padding: 4px; gap: 4px; }
+.mode { height: 44px; border-radius: 10px; font-weight: 600; font-size: 13px; letter-spacing: .1em; text-transform: uppercase; color: var(--dim); }
+.mode[aria-pressed="true"] { background: var(--mc); color: #fff; }
+.mode:disabled:not([aria-pressed="true"]) { opacity: .3; }
+
+.power {
+  height: 64px; border-radius: 999px; display: flex; align-items: center; justify-content: center; gap: 12px;
+  font-weight: 600; font-size: 17px; letter-spacing: .02em;
+  background: var(--pw, var(--green)); color: #fff;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, .06) inset, 0 8px 24px -10px var(--pw, var(--green));
+  transition: background .25s, box-shadow .25s;
+}
+.power svg { width: 24px; height: 24px; }
+.power:disabled { --pw: var(--raised); color: var(--dim); box-shadow: none; }
+.power:active:not(:disabled) { filter: brightness(.9); }
+
+/* ---------------------------------------------------------------- utilities */
+.tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.tile {
+  --tc: var(--dim);
+  position: relative; min-width: 0; padding: 16px 6px 14px; border-radius: 16px;
+  background: var(--panel); border: 1px solid transparent;
+  display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center;
+  transition: background .2s, border-color .2s;
+}
+.tile svg { width: 34px; height: 34px; color: var(--dim); transition: color .2s, filter .2s; }
+.tile .n { font-weight: 600; font-size: 13px; line-height: 1.2; min-height: 2.4em; display: flex; align-items: center; }
+.tile .s { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
+.tile.on { background: color-mix(in srgb, var(--tc) 16%, var(--panel)); border-color: var(--tc); }
+.tile.on svg { color: var(--tc); filter: drop-shadow(0 0 8px color-mix(in srgb, var(--tc) 60%, transparent)); }
+.tile.on .s { color: var(--tc); }
+.tile.pending { border-color: var(--tc); border-style: dashed; }
+.tile.pending .s { animation: blink .8s steps(2) infinite; }
+.note { font-size: 13px; color: var(--dim); margin: -4px 2px 0; }
+
+.winch { background: var(--panel); border-radius: 16px; padding: 16px; display: grid; gap: 12px; }
+.winch header { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.winch h2 { margin: 0; font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); font-weight: 600; }
+.winch .ws { font-size: 12px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--wc, var(--dim)); }
+.chain { display: flex; align-items: baseline; gap: 6px; }
+.chain b { font: 600 44px/1 var(--font-num); font-variant-numeric: tabular-nums; }
+.chain small { color: var(--dim); font-size: 15px; }
+.chainbar { position: relative; height: 10px; border-radius: 5px; background: var(--track); overflow: hidden; }
+.chainbar i { position: absolute; inset: 0 auto 0 0; background: var(--blue); border-radius: 5px; transition: width .25s linear; }
+.scale { display: flex; justify-content: space-between; font: 12px var(--font-num); color: var(--dim); margin-top: -6px; }
+.lock { display: flex; gap: 10px; align-items: flex-start; font-size: 13px; color: var(--dim); border-top: 1px solid var(--track); padding-top: 12px; }
+.lock svg { width: 18px; height: 18px; flex: none; margin-top: 1px; }
+
+/* ---------------------------------------------------------------- tabs, banners */
+.tabs {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 6;
+  display: grid; grid-template-columns: 1fr 1fr;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  border-top: 1px solid var(--track);
+}
+.tab { height: var(--tabbar); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: var(--dim); font-size: 12px; font-weight: 600; letter-spacing: .04em; }
+.tab svg { width: 22px; height: 22px; }
+.tab[aria-selected="true"] { color: var(--text); }
+.tab[aria-selected="true"] svg { color: var(--red); }
+.tab .badge { font: 500 11px var(--font-num); color: var(--dim); letter-spacing: 0; }
+
+.toast {
+  position: fixed; left: 50%; transform: translateX(-50%);
+  bottom: calc(var(--tabbar) + env(safe-area-inset-bottom, 0px) + 12px);
+  background: var(--raised); color: var(--text); border: 1px solid var(--line);
+  padding: 10px 16px; border-radius: 12px; font-size: 14px; z-index: 7;
+  max-width: calc(100% - 32px); text-align: center;
+}
+.demo { background: color-mix(in srgb, var(--yellow) 10%, var(--panel)); border: 1px solid color-mix(in srgb, var(--yellow) 35%, transparent); border-radius: 12px; padding: 10px 12px; font-size: 13px; color: var(--text); }
+.demo b { color: var(--yellow); font-weight: 600; }
+
+@keyframes blink { 50% { opacity: .35; } }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes flick { 0%, 100% { transform: scaleY(1); } 50% { transform: scaleY(1.08) translateY(-1px); } }
+.spin { animation: spin 1.1s linear infinite; transform-origin: 50% 50%; }
+.flick { animation: flick .5s ease-in-out infinite; transform-origin: 50% 100%; }
+@media (prefers-reduced-motion: reduce) {
+  .spin, .flick, .conn .dot, .tile.pending .s { animation: none !important; }
+}
+</style>
+
+<header class="top">
+  <div class="who">
+    <h1 id="title">Cabin Control</h1>
+    <div class="conn" id="conn" data-s="demo"><i class="dot"></i><span id="connText"></span></div>
+  </div>
+  <div class="volt" id="volt">12.7<small>V</small></div>
+</header>
+
+<main>
+  <section class="view" id="v-heat" aria-labelledby="tab-heat">
+    <div class="demo" id="demoNote" hidden></div>
+    <div class="gauge">
+      <svg id="gsvg" viewBox="0 0 300 250" aria-hidden="true"></svg>
+      <div class="g-center">
+        <div class="g-icon" id="gIcon"></div>
+        <div class="g-temp" id="gTemp">--<sup>°C</sup></div>
+        <div class="g-label" id="gLabel"></div>
+      </div>
+      <div class="pill" id="pill"><i></i><span id="pillText"></span><span class="t" id="pillTime"></span></div>
+    </div>
+
+    <div class="stats">
+      <div class="stat"><span id="l-fan"></span><b id="sFan">0</b></div>
+      <div class="stat"><span id="l-out"></span><b id="sOut">0<small>%</small></b></div>
+      <div class="stat"><span id="l-time"></span><b id="sTime">0:00</b></div>
+    </div>
+
+    <div class="stepper">
+      <button class="adj" id="minus" aria-label="Lower"><svg viewBox="0 0 24 24"><path d="M5 12h14" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" fill="none"/></svg></button>
+      <div class="setval" id="setval"><span id="setLabel"></span><b id="setNum"></b></div>
+      <button class="adj" id="plus" aria-label="Raise"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5v14" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" fill="none"/></svg></button>
+    </div>
+
+    <div class="modes" role="group" id="modes">
+      <button class="mode" data-m="0" style="--mc: var(--orange)"></button>
+      <button class="mode" data-m="1" style="--mc: var(--red)"></button>
+      <button class="mode" data-m="2" style="--mc: var(--blue)"></button>
+    </div>
+
+    <button class="power" id="power"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 3v8"/><path d="M6.3 6.8a8 8 0 1 0 11.4 0"/></svg><span id="powerText"></span></button>
+  </section>
+
+  <section class="view" id="v-util" aria-labelledby="tab-util" hidden>
+    <div class="tiles" id="tiles"></div>
+    <p class="note" id="bilgeNote"></p>
+    <div class="winch">
+      <header><h2 id="winchTitle"></h2><span class="ws" id="winchState"></span></header>
+      <div class="chain"><b id="chainNum">0.0</b><small id="chainLabel"></small></div>
+      <div class="chainbar"><i id="chainBar"></i></div>
+      <div class="scale"><span>0 m</span><span>30</span><span>60 m</span></div>
+      <div class="lock"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg><span id="lockText"></span></div>
+    </div>
+  </section>
+</main>
+
+<nav class="tabs" role="tablist">
+  <button class="tab" role="tab" id="tab-heat" aria-selected="true" aria-controls="v-heat">
+    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2c1 3.5 5 6 5 11a5 5 0 0 1-10 0c0-2.4 1.2-4 2.5-5.2.2 1.7.9 2.9 2 3.4C11 8.5 11 5.5 12 2z"/></svg>
+    <span id="t-heat"></span>
+  </button>
+  <button class="tab" role="tab" id="tab-util" aria-selected="false" aria-controls="v-util">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="7" width="18" height="10" rx="5"/><circle cx="16" cy="12" r="2.6" fill="currentColor"/></svg>
+    <span id="t-util"></span>
+  </button>
+</nav>
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script>
+"use strict";
+// ---------------------------------------------------------------- text
+// The screen sends its language (0 English, 1 French, 2 Spanish); the phone follows it.
+const LANGS = ["en", "fr", "es"];
+const TEXT = {
+  en: {
+    heat: "Heating", util: "Utilities",
+    st: ["Standby", "Starting", "Heating", "Ventilation", "Cooling down"],
+    modes: ["Temp", "Power", "Vent"],
+    setT: "Setpoint", setP: "Power level", setF: "Fan speed",
+    cabin: "Cabin", probe: "probe", sim: "simulated",
+    start: "Start heater", startVent: "Start fan", stop: "Stop", stopping: "Cooling down…",
+    fan: "Fan", out: "Output", time: "In state",
+    names: ["Lights", "Water pump", "Bilge pump"], on: "On", off: "Off", manual: "Manual", auto: "Auto",
+    bilge: "The float switch keeps the bilge pump automatic. Manual adds a run on top.",
+    winch: "Windlass", ws: ["Stopped", "Hauling up", "Letting out", "Anchor home"], chain: "of chain out",
+    lock: "The windlass runs only from the main screen, where you can see the bow.",
+    ok: "Connected", lost: "Reconnecting…", demo: "Demo",
+    demoNote: "<b>Demo.</b> Nothing is connected, so the heater and switches are simulated. On the boat, this page comes from the screen itself.",
+    noAnswer: "No answer from the screen. Check you're on its WiFi.",
+    onN: n => n ? n + " on" : "all off",
+  },
+  fr: {
+    heat: "Chauffage", util: "Équipements",
+    st: ["Veille", "Démarrage", "Chauffage", "Ventilation", "Extinction"],
+    modes: ["Temp", "Puiss.", "Vent"],
+    setT: "Consigne", setP: "Puissance", setF: "Ventilation",
+    cabin: "Cabine", probe: "sonde", sim: "simulée",
+    start: "Démarrer", startVent: "Ventiler", stop: "Arrêter", stopping: "Extinction…",
+    fan: "Ventil.", out: "Puissance", time: "Depuis",
+    names: ["Éclairage", "Pompe à eau", "Pompe de cale"], on: "Marche", off: "Arrêt", manual: "Manuel", auto: "Auto",
+    bilge: "Le flotteur garde la pompe de cale en automatique. Manuel ajoute une marche forcée.",
+    winch: "Guindeau", ws: ["Arrêté", "Remontée", "Descente", "Ancre rentrée"], chain: "de chaîne",
+    lock: "Le guindeau se commande seulement depuis l'écran principal, d'où l'on voit l'étrave.",
+    ok: "Connecté", lost: "Reconnexion…", demo: "Démo",
+    demoNote: "<b>Démo.</b> Rien n'est connecté : chauffage et relais sont simulés. À bord, cette page vient de l'écran.",
+    noAnswer: "Pas de réponse de l'écran. Vérifiez le WiFi.",
+    onN: n => n ? n + " en marche" : "tout éteint",
+  },
+  es: {
+    heat: "Calefacción", util: "Servicios",
+    st: ["En espera", "Arranque", "Calefacción", "Ventilación", "Enfriamiento"],
+    modes: ["Temp", "Poten.", "Vent"],
+    setT: "Objetivo", setP: "Potencia", setF: "Ventilador",
+    cabin: "Cabina", probe: "sonda", sim: "simulada",
+    start: "Encender", startVent: "Ventilar", stop: "Apagar", stopping: "Enfriando…",
+    fan: "Ventil.", out: "Potencia", time: "Tiempo",
+    names: ["Luces", "Bomba de agua", "Bomba de sentina"], on: "Encendido", off: "Apagado", manual: "Manual", auto: "Auto",
+    bilge: "El flotador mantiene la bomba de sentina en automático. Manual añade una marcha extra.",
+    winch: "Molinete", ws: ["Parado", "Subiendo", "Bajando", "Ancla arriba"], chain: "de cadena",
+    lock: "El molinete solo se maneja desde la pantalla principal, desde donde se ve la proa.",
+    ok: "Conectado", lost: "Reconectando…", demo: "Demo",
+    demoNote: "<b>Demo.</b> No hay nada conectado: la calefacción y los relés están simulados. A bordo, esta página la sirve la pantalla.",
+    noAnswer: "La pantalla no responde. Compruebe el WiFi.",
+    onN: n => n ? n + " activos" : "todo apagado",
+  },
+};
+
+// ---------------------------------------------------------------- state
+// Same fields the screen sends over the WebSocket (see phoneStateJson() in main.cpp)
+const ST_OFF = 0, ST_STARTING = 1, ST_RUNNING = 2, ST_VENTING = 3, ST_COOLDOWN = 4;
+const MODE_TEMP = 0, MODE_POWER = 1, MODE_VENT = 2;
+let S = null;            // last state from the screen
+let lastMsgAt = 0;
+let txt = TEXT.en;
+const pending = [null, null, null];  // toggle i: {want, at} until the screen confirms it
+
+const $ = id => document.getElementById(id);
+const STATE_COLOR = ["var(--dim)", "var(--yellow)", "var(--orange)", "var(--blue)", "var(--blue)"];
+const MODE_COLOR = ["var(--orange)", "var(--red)", "var(--blue)"];
+const TILE_COLOR = ["var(--yellow)", "var(--blue)", "var(--orange)"];
+const ICONS = [
+  '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z"/><rect x="8.5" y="18.2" width="7" height="1.6" rx=".8"/><rect x="9.5" y="20.6" width="5" height="1.6" rx=".8"/></svg>',
+  '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5c3 4 6.5 7.6 6.5 11.5a6.5 6.5 0 0 1-13 0C5.5 10.1 9 6.5 12 2.5z"/></svg>',
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v10M8 9l4 4 4-4" /><path d="M2.5 19c1.6-1.3 3.2-1.3 4.8 0s3.2 1.3 4.8 0 3.2-1.3 4.8 0 3.2 1.3 4.8 0"/></svg>',
+];
+const FLAME = '<svg class="flick" viewBox="0 0 24 24"><path fill="var(--red)" d="M12 2c1 3.5 5 6 5 11a5 5 0 0 1-10 0c0-2.4 1.2-4 2.5-5.2.2 1.7.9 2.9 2 3.4C11 8.5 11 5.5 12 2z"/><path fill="var(--orange)" d="M12 11c.6 1.6 2.4 2.8 2.4 4.8a2.4 2.4 0 0 1-4.8 0c0-1 .4-1.7 1-2.3.2.6.5 1 1 1.1-.1-1.3-.1-2.4.4-3.6z"/></svg>';
+const FAN = '<svg class="spin" viewBox="0 0 24 24" fill="var(--blue)"><circle cx="12" cy="12" r="2.2"/><path d="M12 9.8c-.8-3 .2-6.3 2.7-6.3 2 0 2.3 2.8.4 4.6zM14.2 12c3-.8 6.3.2 6.3 2.7 0 2-2.8 2.3-4.6.4zM12 14.2c.8 3-.2 6.3-2.7 6.3-2 0-2.3-2.8-.4-4.6zM9.8 12c-3 .8-6.3-.2-6.3-2.7 0-2 2.8-2.3 4.6-.4z"/></svg>';
+const GLOW = '<svg viewBox="0 0 24 24" fill="none" stroke="var(--yellow)" stroke-width="2.2" stroke-linecap="round"><path d="M9 3v4c0 2 6 2 6 4s-6 2-6 4 6 2 6 4v2"/></svg>';
+
+// ---------------------------------------------------------------- gauge
+// Same sweep as the screen: 0..35 C over 260 degrees, gap at the bottom.
+const G = { cx: 150, cy: 138, r: 112, w: 16, a0: -130, a1: 130, tMin: 0, tMax: 35, segs: 52 };
+const SVGNS = "http://www.w3.org/2000/svg";
+function polar(a, r) {
+  const rad = a * Math.PI / 180;
+  return [G.cx + r * Math.sin(rad), G.cy - r * Math.cos(rad)];
+}
+function arcPath(a, b, r) {
+  const [x0, y0] = polar(a, r), [x1, y1] = polar(b, r);
+  return `M${x0.toFixed(2)} ${y0.toFixed(2)}A${r} ${r} 0 ${b - a > 180 ? 1 : 0} 1 ${x1.toFixed(2)} ${y1.toFixed(2)}`;
+}
+// cold blue -> orange -> red, like heatColor() on the screen
+function heatColor(f) {
+  const mix = (c0, c1, k) => c0.map((v, i) => Math.round(v + (c1[i] - v) * k));
+  const blue = [50, 140, 240], orange = [255, 128, 32], red = [228, 0, 43];
+  const c = f < .5 ? mix(blue, orange, f * 2) : mix(orange, red, (f - .5) * 2);
+  return `rgb(${c})`;
+}
+const segEls = [];
+let markEl;
+function buildGauge() {
+  const svg = $("gsvg");
+  const span = (G.a1 - G.a0) / G.segs;
+  for (let i = 0; i < G.segs; i++) {
+    const p = document.createElementNS(SVGNS, "path");
+    p.setAttribute("d", arcPath(G.a0 + i * span + .7, G.a0 + (i + 1) * span - .7, G.r));
+    p.setAttribute("stroke-width", G.w);
+    p.setAttribute("fill", "none");
+    svg.appendChild(p);
+    segEls.push(p);
+  }
+  for (let t = 0; t <= 35; t += 5) {
+    const a = G.a0 + (t / G.tMax) * (G.a1 - G.a0);
+    const [x0, y0] = polar(a, G.r - G.w / 2 - 6), [x1, y1] = polar(a, G.r - G.w / 2 - (t % 10 ? 9 : 13));
+    const l = document.createElementNS(SVGNS, "line");
+    Object.entries({ x1: x0, y1: y0, x2: x1, y2: y1, stroke: "var(--dim)", "stroke-width": 1.5, "stroke-linecap": "round" })
+      .forEach(([k, v]) => l.setAttribute(k, v));
+    svg.appendChild(l);
+    if (t % 10 === 0) {
+      const [tx, ty] = polar(a, G.r - G.w / 2 - 24);
+      const tEl = document.createElementNS(SVGNS, "text");
+      Object.entries({ x: tx, y: ty + 4, "text-anchor": "middle", fill: "var(--dim)", "font-size": 11, "font-family": "var(--font-num)" })
+        .forEach(([k, v]) => tEl.setAttribute(k, v));
+      tEl.textContent = t;
+      svg.appendChild(tEl);
+    }
+  }
+  markEl = document.createElementNS(SVGNS, "path");  // setpoint marker, TEMP mode only
+  markEl.setAttribute("d", "M0 -9 L6 3 L-6 3 Z");
+  markEl.setAttribute("fill", "var(--text)");
+  svg.appendChild(markEl);
+}
+function drawGauge(temp, setT, showMark) {
+  const f = Math.max(0, Math.min(1, (temp - G.tMin) / (G.tMax - G.tMin)));
+  const lit = Math.round(f * G.segs);
+  segEls.forEach((p, i) => p.setAttribute("stroke", i < lit ? heatColor(i / (G.segs - 1)) : "var(--track)"));
+  const a = G.a0 + (Math.max(0, Math.min(35, setT)) / G.tMax) * (G.a1 - G.a0);
+  const [x, y] = polar(a, G.r + G.w / 2 + 7);
+  markEl.setAttribute("transform", `translate(${x.toFixed(1)} ${y.toFixed(1)}) rotate(${a + 180})`);
+  markEl.style.display = showMark ? "" : "none";
+}
+
+// ---------------------------------------------------------------- render
+const fmtTime = ms => { const s = Math.floor(ms / 1000); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
+function setText(id, v) { const e = $(id); if (e.textContent !== String(v)) e.textContent = v; }
+function setHTML(id, v) { const e = $(id); if (e.innerHTML !== v) e.innerHTML = v; }
+
+function applyLanguage() {
+  setText("t-heat", txt.heat);
+  setText("t-util", txt.util);
+  setText("l-fan", txt.fan);
+  setText("l-out", txt.out);
+  setText("l-time", txt.time);
+  document.querySelectorAll(".mode").forEach(b => b.textContent = txt.modes[+b.dataset.m]);
+  setText("winchTitle", txt.winch);
+  setText("chainLabel", "m " + txt.chain);
+  setText("lockText", txt.lock);
+  setText("bilgeNote", txt.bilge);
+  $("demoNote").innerHTML = txt.demoNote;
+  $("tiles").innerHTML = txt.names.map((n, i) =>
+    `<button class="tile" data-i="${i}" style="--tc:${TILE_COLOR[i]}">${ICONS[i]}<span class="n">${n}</span><span class="s"></span></button>`).join("");
+}
+
+function render() {
+  if (!S) return;
+  const code = LANGS[S.lang] || "en";
+  if (TEXT[code] !== txt) { txt = TEXT[code]; document.documentElement.lang = code; applyLanguage(); }
+  const now = Date.now();
+  const online = DEMO || now - lastMsgAt < 2000;
+  document.body.classList.toggle("offline", !online);
+  const conn = $("conn");
+  conn.dataset.s = DEMO ? "demo" : online ? "ok" : "lost";
+  setText("connText", DEMO ? txt.demo : online ? txt.ok + (S.name ? " · " + S.name : "") : txt.lost);
+  setHTML("volt", S.v.toFixed(1) + "<small>V</small>");
+  $("volt").classList.toggle("low", S.v < 11.8);  // same warning level as the screen
+
+  // heater
+  drawGauge(S.cab, S.set, S.md === MODE_TEMP);
+  setHTML("gTemp", S.cab.toFixed(1) + "<sup>°C</sup>");
+  setHTML("gLabel", `${txt.cabin} · <b>${S.probe ? txt.probe : txt.sim}</b>`);
+  const icon = S.st === ST_RUNNING ? FLAME : S.st === ST_STARTING ? GLOW : (S.st === ST_VENTING || S.st === ST_COOLDOWN) ? FAN : "";
+  if ($("gIcon").dataset.k !== String(S.st)) { $("gIcon").innerHTML = icon; $("gIcon").dataset.k = S.st; }
+  $("pill").style.setProperty("--pc", STATE_COLOR[S.st]);
+  setText("pillText", txt.st[S.st]);
+  setText("pillTime", S.st === ST_OFF ? "" : fmtTime(S.ms));
+  setText("sFan", Math.round(S.rpm / 10) * 10);
+  setHTML("sOut", Math.round(S.out * 100) + "<small>%</small>");
+  setText("sTime", fmtTime(S.ms));
+
+  const mc = MODE_COLOR[S.md];
+  $("setval").style.setProperty("--mc", mc);
+  if (S.md === MODE_TEMP) { setText("setLabel", txt.setT); setHTML("setNum", S.set + "<small>°C</small>"); }
+  else if (S.md === MODE_POWER) { setText("setLabel", txt.setP); setHTML("setNum", S.pw + "<small>/ 9</small>"); }
+  else { setText("setLabel", txt.setF); setHTML("setNum", S.fan + "<small>/ 9</small>"); }
+  const [lo, hi, v] = S.md === MODE_TEMP ? [1, 30, S.set] : S.md === MODE_POWER ? [0, 9, S.pw] : [1, 9, S.fan];
+  $("minus").disabled = v <= lo;
+  $("plus").disabled = v >= hi;
+
+  // a burning heater can switch TEMP <-> POWER; VENT needs a stop first (same rule as the screen)
+  const burning = S.st === ST_STARTING || S.st === ST_RUNNING;
+  document.querySelectorAll(".mode").forEach(b => {
+    const m = +b.dataset.m;
+    b.setAttribute("aria-pressed", m === S.md);
+    b.disabled = (burning && m === MODE_VENT) || (S.st === ST_VENTING && m !== MODE_VENT);
+  });
+  const pw = $("power");
+  pw.disabled = S.st === ST_COOLDOWN;
+  pw.style.setProperty("--pw", S.st === ST_OFF ? "var(--green)" : "var(--red)");
+  setText("powerText", S.st === ST_OFF ? (S.md === MODE_VENT ? txt.startVent : txt.start)
+    : S.st === ST_COOLDOWN ? txt.stopping : txt.stop);
+
+  // utilities
+  let nOn = 0;
+  document.querySelectorAll(".tile").forEach(el => {
+    const i = +el.dataset.i, on = !!S.tg[i];
+    if (on) nOn++;
+    const p = pending[i];
+    if (p && (p.want === on)) pending[i] = null;
+    else if (p && now - p.at > 2500) { pending[i] = null; toast(txt.noAnswer); }
+    el.classList.toggle("on", on);
+    el.classList.toggle("pending", !!pending[i]);
+    const bilge = i === 2;
+    el.querySelector(".s").textContent = bilge ? (on ? txt.manual : txt.auto) : (on ? txt.on : txt.off);
+    el.setAttribute("aria-pressed", on);
+  });
+  setText("chainNum", S.chain.toFixed(1));
+  $("chainBar").style.width = (S.chain / 60 * 100).toFixed(1) + "%";
+  const wsI = S.wn || (S.chain <= 0 ? 3 : 0);
+  $("winchState").style.setProperty("--wc", S.wn === 1 ? "var(--green)" : S.wn === 2 ? "var(--orange)" : "var(--dim)");
+  setText("winchState", txt.ws[wsI]);
+}
+
+let toastTimer;
+function toast(msg) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.hidden = true, 3500);
+}
+
+// ---------------------------------------------------------------- tabs
+function showTab(which) {
+  const heat = which === "heat";
+  $("v-heat").hidden = !heat;
+  $("v-util").hidden = heat;
+  $("tab-heat").setAttribute("aria-selected", heat);
+  $("tab-util").setAttribute("aria-selected", !heat);
+  try { localStorage.setItem("tab", which); } catch (e) {}
+}
+$("tab-heat").onclick = () => showTab("heat");
+$("tab-util").onclick = () => showTab("util");
+
+// ---------------------------------------------------------------- controls
+// Commands are short text messages, the same presses the screen's own buttons make:
+//   power | mode <0-2> | adj <-1|1> | toggle <0-2>
+$("power").onclick = () => send("power");
+$("modes").onclick = e => { const b = e.target.closest(".mode"); if (b && !b.disabled) send("mode " + b.dataset.m); };
+$("tiles").onclick = e => {
+  const b = e.target.closest(".tile");
+  if (!b || !S) return;
+  const i = +b.dataset.i;
+  if (pending[i]) return;
+  pending[i] = { want: !S.tg[i], at: Date.now() };
+  send("toggle " + i);
+  render();
+};
+// + and -: tap for one step, hold to repeat (as on the screen)
+for (const [id, d] of [["minus", -1], ["plus", 1]]) {
+  const b = $(id);
+  let delay, rep;
+  const stop = () => { clearTimeout(delay); clearInterval(rep); b.classList.remove("held"); };
+  b.addEventListener("pointerdown", e => {
+    if (b.disabled) return;
+    e.preventDefault();
+    b.classList.add("held");
+    send("adj " + d);
+    delay = setTimeout(() => rep = setInterval(() => b.disabled ? stop() : send("adj " + d), 150), 500);
+  });
+  ["pointerup", "pointercancel", "pointerleave"].forEach(ev => b.addEventListener(ev, stop));
+  b.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); send("adj " + d); } });
+}
+document.addEventListener("contextmenu", e => e.preventDefault());
+
+// ---------------------------------------------------------------- connection
+// Served by the screen: talk to it over a WebSocket on port 81. Opened any
+// other way (a file, a preview): run a local simulation of the screen instead.
+const DEMO = !(location.protocol === "http:" && /^(\d+\.){3}\d+$|\.local$/.test(location.hostname));
+let ws = null;
+
+function connect() {
+  ws = new WebSocket(`ws://${location.hostname}:81/`);
+  ws.onmessage = e => {
+    try { S = JSON.parse(e.data); } catch (err) { return; }
+    lastMsgAt = Date.now();
+    render();
+  };
+  ws.onclose = () => { ws = null; setTimeout(connect, 1000); };
+  ws.onerror = () => ws && ws.close();
+}
+
+function send(cmd) {
+  if (DEMO) { setTimeout(() => demoCmd(cmd), 120); return; }
+  if (ws && ws.readyState === 1) ws.send(cmd);
+}
+
+// ---------------------------------------------------------------- demo
+// A port of simulate() / simulateWinch() from main.cpp so the page can be tried without a screen.
+let D;
+function demoStart() {
+  const lang = (navigator.language || "en").slice(0, 2);
+  D = { st: 0, md: 0, set: 22, pw: 5, fan: 4, cab: 9.0, out: 0, rpm: 0, v: 12.7, probe: 0,
+        tg: [1, 0, 0], wn: 0, chain: 12.0, ms: 0, lang: Math.max(0, LANGS.indexOf(lang)), name: "" };
+  D.since = Date.now();
+  let last = Date.now(), tick = 0;
+  setInterval(() => {
+    const now = Date.now(), dt = (now - last) / 1000;
+    last = now;
+    demoSim(dt);
+    if (++tick % 5 === 0) { S = { ...D, ms: now - D.since }; render(); }
+  }, 50);
+  S = { ...D };
+}
+function demoSetState(s) { D.st = s; D.since = Date.now(); }
+function demoSim(dt) {
+  const t = Date.now() - D.since;
+  let targetOut = 0, targetRpm = 0;
+  D.v = 12.7;
+  if (D.st === ST_STARTING) { D.v = 12.1; targetRpm = 1500; targetOut = t > 6000 ? .2 : 0; if (t > 12000) demoSetState(ST_RUNNING); }
+  else if (D.st === ST_RUNNING) {
+    D.v = 12.5;
+    targetOut = D.md === MODE_TEMP ? Math.min(1, Math.max(.1, .15 + (D.set - D.cab) * .25)) : .1 + D.pw * .1;
+    targetRpm = 1200 + targetOut * 3300;
+  } else if (D.st === ST_VENTING) targetRpm = 600 + D.fan * 350;
+  else if (D.st === ST_COOLDOWN) { targetRpm = 3000; if (t > 10000) demoSetState(ST_OFF); }
+  D.out += (targetOut - D.out) * Math.min(1, dt * .8);
+  D.rpm += (targetRpm - D.rpm) * Math.min(1, dt * 1.5);
+  D.cab += (D.out * .12 - (D.cab - 6) * .004) * dt;
+}
+function demoCmd(cmd) {
+  const [c, a] = cmd.split(" "), n = +a;
+  if (c === "power") {
+    if (D.st === ST_OFF) demoSetState(D.md === MODE_VENT ? ST_VENTING : ST_STARTING);
+    else if (D.st === ST_STARTING || D.st === ST_RUNNING) demoSetState(ST_COOLDOWN);
+    else if (D.st === ST_VENTING) demoSetState(ST_OFF);
+  } else if (c === "mode") {
+    const burning = D.st === ST_STARTING || D.st === ST_RUNNING;
+    if (!((burning && n === MODE_VENT) || (D.st === ST_VENTING && n !== MODE_VENT))) D.md = n;
+  } else if (c === "adj") {
+    const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+    if (D.md === MODE_TEMP) D.set = clamp(D.set + n, 1, 30);
+    else if (D.md === MODE_POWER) D.pw = clamp(D.pw + n, 0, 9);
+    else D.fan = clamp(D.fan + n, 1, 9);
+  } else if (c === "toggle") D.tg[n] = D.tg[n] ? 0 : 1;
+  S = { ...D, ms: Date.now() - D.since };
+  render();
+}
+
+// ---------------------------------------------------------------- start
+buildGauge();
+applyLanguage();
+try { if (localStorage.getItem("tab") === "util") showTab("util"); } catch (e) {}
+if (DEMO) { $("demoNote").hidden = false; demoStart(); render(); }
+else { connect(); setInterval(render, 500); }  // also notices a silent screen
+</script>
