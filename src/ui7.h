@@ -87,8 +87,11 @@ int drawWrapped(const char *s, int x, int y, int w, int lineH) {
 // ---------------------------------------------------------------- header and tabs
 // The logo tile, ADVENTURE VAN LIFE, a status line under it (what the CYD
 // shows in its header pill) and the voltage on the right.
+extern bool voltShown;
+
 void drawHeader(bool tabs) {
   tft.fillRect(0, 0, SCR_W, HDR_H, C_BG);
+  voltShown = false;
   tft.pushImage(16, (HDR_H - AVL_LOGO_SMALL_H) / 2, AVL_LOGO_SMALL_W, AVL_LOGO_SMALL_H, avl_logo_small_bitmap);
   tft.loadFont(F7_17);
   tft.setTextColor(C_TEXT, C_BG);
@@ -111,8 +114,17 @@ void drawPill(const char *text, uint16_t col) {
   setBodyFont(tft);
 }
 
-// the voltage in a pill on the right of the header
+// The voltage in a pill on the right of the header. Called often, so it
+// only draws when the reading or the page changed: every redraw of the
+// screen is time the panel shares memory with the processor.
+bool voltShown = false;  // cleared when the header is drawn again
+
 void drawVoltage() {
+  static int last = -1;
+  int v = lroundf(voltage * 10);
+  if (voltShown && v == last) return;
+  voltShown = true;
+  last = v;
   char buf[10];
   snprintf(buf, sizeof buf, "%.1f", voltage);
   TFT_eSprite &s = voltSpr;
@@ -496,16 +508,19 @@ void drawDynamic(bool force = false) {
 // over the temperature: a flickering flame while burning, a turning fan
 // while it ventilates or cools down, a glow plug coil while it starts
 void drawAnimation() {
+  static bool blank = false;
   const int cx = anim.width() / 2;
   float phase = ((animTick * 37) % 10) / 9.0f;  // irregular flicker
+  bool fan = state == ST_VENTING || state == ST_COOLDOWN;
+  bool glow = state == ST_STARTING && millis() - stateSince <= START_MS / 2;
+  bool flame = state == ST_RUNNING || (state == ST_STARTING && !glow);
+  // with nothing to show, the space is already clear (a page draw clears it too)
+  if (!fan && !glow && !flame && blank) return;
+  blank = !fan && !glow && !flame;
   anim.fillSprite(C_BG);
-  if (state == ST_RUNNING || (state == ST_STARTING && millis() - stateSince > START_MS / 2)) {
-    drawFlame(anim, cx, 30, 10, phase, C_BG);
-  } else if (state == ST_STARTING) {
-    for (int k = 0; k < 4; k++) anim.drawWideLine(cx - 6, 6 + k * 7, cx + 6, 9 + k * 7, 3, C_YELLOW, C_BG);
-  } else if (state == ST_VENTING || state == ST_COOLDOWN) {
-    drawFan(anim, cx, 18, 15, animTick * 0.5f, C_BLUE, C_BG);
-  }
+  if (flame) drawFlame(anim, cx, 30, 10, phase, C_BG);
+  else if (glow) for (int k = 0; k < 4; k++) anim.drawWideLine(cx - 6, 6 + k * 7, cx + 6, 9 + k * 7, 3, C_YELLOW, C_BG);
+  else if (fan) drawFan(anim, cx, 18, 15, animTick * 0.5f, C_BLUE, C_BG);
   pushSpr(anim, GX - anim.width() / 2, GY - 86);
 }
 

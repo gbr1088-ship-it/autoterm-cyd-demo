@@ -238,20 +238,25 @@ void touch7Begin() {
 
 // Finger position in screen pixels. The GT911 only has a new reading every
 // ~10 ms, so in between the last one is repeated.
+// Phantom touches (a screen protector gave plenty) are filtered out: a
+// reading with no contact area doesn't count, and a touch only counts once
+// it has lasted TOUCH_MIN_MS.
+const uint32_t TOUCH_MIN_MS = 30;
+
 bool touch7Read(int &x, int &y) {
-  static bool down = false;
+  static bool contact = false;
   static int lx = 0, ly = 0;
-  static uint32_t lastPoll = 0;
+  static uint32_t lastPoll = 0, since = 0;
   if (!gtFound) return false;
-  if (millis() - lastPoll < 10) { x = lx; y = ly; return down; }
-  lastPoll = millis();
-  uint8_t st;
-  if (!gtRead(0x814E, &st, 1)) return down = false;
-  if (st & 0x80) {  // a fresh reading
-    down = false;
-    if ((st & 0x0F) > 0) {
-      uint8_t p[4];
-      if (gtRead(0x8150, p, 4)) {
+  if (millis() - lastPoll >= 10) {
+    lastPoll = millis();
+    uint8_t st;
+    if (!gtRead(0x814E, &st, 1)) {
+      contact = false;
+    } else if (st & 0x80) {  // a fresh reading
+      bool now = false;
+      uint8_t p[6];  // x, y, contact area
+      if ((st & 0x0F) > 0 && gtRead(0x8150, p, 6) && (p[4] | (p[5] << 8)) > 0) {
         int px = constrain(p[0] | (p[1] << 8), 0, P7_W - 1), py = constrain(p[2] | (p[3] << 8), 0, P7_H - 1);
 #if P7_PORTRAIT == 1
         lx = P7_H - 1 - py;
@@ -260,13 +265,18 @@ bool touch7Read(int &x, int &y) {
         lx = py;
         ly = P7_W - 1 - px;
 #endif
-        down = true;
-        Serial.printf("touch %d,%d\n", lx, ly);
+        now = true;
       }
+      if (now && !contact) since = millis();
+      contact = now;
+      gtWrite(0x814E, 0);
     }
-    gtWrite(0x814E, 0);
   }
   x = lx; y = ly;
+  bool down = contact && millis() - since >= TOUCH_MIN_MS;
+  static bool wasDown = false;
+  if (down && !wasDown) Serial.printf("touch %d,%d\n", lx, ly);
+  wasDown = down;
   return down;
 }
 
