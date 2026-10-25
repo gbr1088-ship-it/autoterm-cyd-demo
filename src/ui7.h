@@ -84,6 +84,14 @@ int drawWrapped(const char *s, int x, int y, int w, int lineH) {
   return y;
 }
 
+// fillTriangle has hard edges; going round it with anti-aliased lines softens them
+void fillSmoothTriangle(TFT_eSPI &g, int x0, int y0, int x1, int y1, int x2, int y2, uint16_t col, uint16_t bg) {
+  g.fillTriangle(x0, y0, x1, y1, x2, y2, col);
+  g.drawWideLine(x0, y0, x1, y1, 1.5f, col, bg);
+  g.drawWideLine(x1, y1, x2, y2, 1.5f, col, bg);
+  g.drawWideLine(x2, y2, x0, y0, 1.5f, col, bg);
+}
+
 // ---------------------------------------------------------------- header and tabs
 // The logo tile, ADVENTURE VAN LIFE, a status line under it (what the CYD
 // shows in its header pill) and the voltage on the right.
@@ -149,7 +157,7 @@ void drawTabIcon(int i, int cx, int cy, uint16_t col) {
   switch (i) {
     case 0:  // flame
       tft.fillSmoothCircle(cx, cy + 4, 7, col, C_BG);
-      tft.fillTriangle(cx - 7, cy + 3, cx + 7, cy + 3, cx + 1, cy - 11, col);
+      fillSmoothTriangle(tft, cx - 7, cy + 3, cx + 7, cy + 3, cx + 1, cy - 11, col, C_BG);
       break;
     case 1:  // switch
       tft.drawSmoothRoundRect(cx - 11, cy - 6, 6, 5, 22, 12, col, C_BG);
@@ -230,15 +238,16 @@ void drawGauge() {
   int lit = lroundf(f * SEGS);
   for (int i = 0; i < SEGS; i++) {
     int a = G_START + i * 5;
-    tft.drawArc(GX, GY, G_OUT, G_IN, a, a + 4, i < lit ? heatColor((float)i / (SEGS - 1)) : C_TRACK, C_BG, false);
+    // smooth (anti-aliased) edges against the background
+    tft.drawArc(GX, GY, G_OUT, G_IN, a, a + 4, i < lit ? heatColor((float)i / (SEGS - 1)) : C_TRACK, C_BG, true);
   }
   tft.drawArc(GX, GY, G_OUT + 18, G_OUT + 1, G_START - 12, G_END + 12, C_BG, C_BG, false);  // old marker
   if (mode != MODE_TEMP) return;
-  float t = constrain(setTemp, 0, 35), x0, y0, x1, y1, x2, y2;
-  gaugePoint(t, G_OUT + 3, x0, y0);
-  gaugePoint(t - 0.3f, G_OUT + 15, x1, y1);  // 0.3 C is about 2 degrees of sweep, 6 px out there
-  gaugePoint(t + 0.3f, G_OUT + 15, x2, y2);
-  tft.fillTriangle(x0, y0, x1, y1, x2, y2, C_TEXT);
+  // a smooth wedge pointing in at the ring
+  float t = constrain(setTemp, 0, 35), x0, y0, x1, y1;
+  gaugePoint(t, G_OUT + 4, x0, y0);
+  gaugePoint(t, G_OUT + 15, x1, y1);
+  tft.drawWedgeLine(x0, y0, x1, y1, 0.5f, 6.5f, C_TEXT, C_BG);
 }
 
 // the big cabin temperature with a small degree C after it
@@ -537,7 +546,7 @@ void drawTileIcon(int i, int cx, int cy, uint16_t col, uint16_t bg) {
       break;
     case 1:  // drop
       tft.fillSmoothCircle(cx, cy + 5, 11, col, bg);
-      tft.fillTriangle(cx - 10, cy + 1, cx + 10, cy + 1, cx, cy - 16, col);
+      fillSmoothTriangle(tft, cx - 10, cy + 1, cx + 10, cy + 1, cx, cy - 16, col, bg);
       break;
     case 2:  // pump: arrow down to a wave
       tft.drawWideLine(cx, cy - 15, cx, cy + 1, 3, col, bg);
@@ -580,8 +589,8 @@ void drawWinchButton(const Button &b, bool up, bool active) {
   if (!active) tft.drawFastHLine(b.x + 16, b.y + 1, b.w - 32, tft.alphaBlend(16, TFT_WHITE, fill));
   int cx = b.x + b.w / 2, cy = b.y + b.h * 2 / 5;
   uint16_t ink = active ? C_BG : col;
-  if (up) tft.fillTriangle(cx - 30, cy + 18, cx + 30, cy + 18, cx, cy - 24, ink);
-  else tft.fillTriangle(cx - 30, cy - 18, cx + 30, cy - 18, cx, cy + 24, ink);
+  if (up) fillSmoothTriangle(tft, cx - 30, cy + 18, cx + 30, cy + 18, cx, cy - 24, ink, fill);
+  else fillSmoothTriangle(tft, cx - 30, cy - 18, cx + 30, cy - 18, cx, cy + 24, ink, fill);
   tft.loadFont(F7_17);
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(active ? C_BG : isRemote() ? C_DIM : C_TEXT, fill);

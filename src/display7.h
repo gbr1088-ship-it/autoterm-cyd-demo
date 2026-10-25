@@ -17,6 +17,7 @@
 #include <SPI.h>
 #include <Wire.h>
 #include <TFT_eSPI.h>
+#include <esp_idf_version.h>
 #include <esp_lcd_panel_ops.h>
 #include <esp_lcd_panel_rgb.h>
 
@@ -41,12 +42,17 @@ const int P7_DATA[16] = {14, 38, 18, 17, 10,  39, 0, 45, 48, 47, 21,  1, 2, 42, 
 #define EXIO_SD_CS   0x10  // high = SD card not selected
 #define EXIO_USB_SEL 0x20  // high gives the USB lines to the CAN chip; low keeps them on the USB socket
 
-// Panel timing for the board's 7" 800x480 panel (Waveshare's values). The
-// panel reads its frame buffer straight from PSRAM (no bounce buffers in
-// IDF 4.4), so it can jitter while the CPU is busy in PSRAM too. 12 MHz
-// left this panel white, so it stays at 16.
+// Panel timing for the board's 7" 800x480 panel (Waveshare's values).
+// 12 MHz left this panel white, so it stays at 16.
 #ifndef P7_PCLK_HZ
 #define P7_PCLK_HZ 16000000
+#endif
+// The panel's frame buffer is in PSRAM. On ESP-IDF 5 (Arduino core 3) the
+// driver copies it to the panel through bounce buffers of this many lines
+// in internal RAM, so the picture holds steady while the processor and
+// WiFi are busy in PSRAM too; without them (IDF 4.4) it jittered.
+#ifndef P7_BOUNCE_LINES
+#define P7_BOUNCE_LINES 10
 #endif
 
 const int P7_W = 800, P7_H = 480;   // the panel
@@ -297,7 +303,13 @@ void display7Begin() {
   if (!tft.createSprite(UI_W, UI_H)) Serial.println("[display] no memory for the screen sprite");
 
   esp_lcd_rgb_panel_config_t cfg = {};
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+  cfg.clk_src = LCD_CLK_SRC_DEFAULT;
+  cfg.num_fbs = 1;
+  cfg.bounce_buffer_size_px = P7_W * P7_BOUNCE_LINES;
+#else
   cfg.clk_src = LCD_CLK_SRC_PLL160M;
+#endif
   cfg.timings.pclk_hz = P7_PCLK_HZ;
   cfg.timings.h_res = P7_W;
   cfg.timings.v_res = P7_H;

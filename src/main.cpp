@@ -33,6 +33,9 @@
 #include <esp_now.h>
 #include <esp_wifi.h>
 #include <esp_ota_ops.h>
+#if __has_include(<esp_mac.h>)
+#include <esp_mac.h>  // esp_read_mac() moved here in ESP-IDF 5 (the 7"'s core 3)
+#endif
 #include <esp_sntp.h>
 #include <mbedtls/sha256.h>
 #include <WebServer.h>
@@ -1617,7 +1620,7 @@ RxMsg rxQueue[8];
 volatile uint8_t rxHead = 0, rxTail = 0;
 portMUX_TYPE rxMux = portMUX_INITIALIZER_UNLOCKED;
 
-void onRadioRecv(const uint8_t *mac, const uint8_t *data, int len) {
+void queueRadio(const uint8_t *mac, const uint8_t *data, int len) {
   if (len < (int)sizeof(CmdPkt) || len > (int)sizeof(StatePkt)) return;
   portENTER_CRITICAL(&rxMux);
   uint8_t next = (rxHead + 1) % 8;
@@ -1629,6 +1632,13 @@ void onRadioRecv(const uint8_t *mac, const uint8_t *data, int len) {
   }
   portEXIT_CRITICAL(&rxMux);
 }
+
+// the 7" runs on Arduino core 3 (ESP-IDF 5), where the callback gets the sender in a struct
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+void onRadioRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) { queueRadio(info->src_addr, data, len); }
+#else
+void onRadioRecv(const uint8_t *mac, const uint8_t *data, int len) { queueRadio(mac, data, len); }
+#endif
 
 void addPeer(const uint8_t *mac) {
   if (esp_now_is_peer_exist(mac)) return;
@@ -2331,7 +2341,7 @@ void installUpdate() {
   mbedtls_sha256_init(&sha);
   mbedtls_sha256_starts(&sha, 0);
   static uint8_t buf[4096];
-  WiFiClient *stream = http.getStreamPtr();
+  auto *stream = http.getStreamPtr();  // WiFiClient, or NetworkClient on core 3
   int done = 0, lastPct = 0;
   uint32_t lastData = millis();
   while (done < len && millis() - lastData < 15000) {
