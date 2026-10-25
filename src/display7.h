@@ -41,11 +41,12 @@ const int P7_DATA[16] = {14, 38, 18, 17, 10,  39, 0, 45, 48, 47, 21,  1, 2, 42, 
 #define EXIO_SD_CS   0x10  // high = SD card not selected
 #define EXIO_USB_SEL 0x20  // high gives the USB lines to the CAN chip; low keeps them on the USB socket
 
-// Panel timing for the board's 7" 800x480 panel. The panel reads its frame
-// buffer straight from PSRAM (no bounce buffers in IDF 4.4), and at 16 MHz
-// it jittered while the CPU was busy in PSRAM too; 12 MHz leaves more room.
+// Panel timing for the board's 7" 800x480 panel (Waveshare's values). The
+// panel reads its frame buffer straight from PSRAM (no bounce buffers in
+// IDF 4.4), so it can jitter while the CPU is busy in PSRAM too. 12 MHz
+// left this panel white, so it stays at 16.
 #ifndef P7_PCLK_HZ
-#define P7_PCLK_HZ 12000000
+#define P7_PCLK_HZ 16000000
 #endif
 
 const int P7_W = 800, P7_H = 480;   // the panel
