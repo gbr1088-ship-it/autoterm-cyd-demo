@@ -11,6 +11,16 @@ This is a demo controller UI for an Autoterm (Planar) diesel heater. The heater 
    ```
    If the upload won't start, hold **BOOT** and tap **RST**.
 
+### 7 inch screen (Waveshare ESP32-S3-Touch-LCD-7)
+The same Adventure Van Life firmware also builds for Waveshare's 7" ESP32-S3 board:
+```
+pio run -e avl7 -t upload
+```
+Plug into the port marked **UART**. It shows the same screens at double size
+(640x480 in the middle of the 800x480 panel, the side margins filled in), with
+the touch scaled to match. Its backlight is on/off only, so the brightness
+setting doesn't dim it. The DS18B20 probe goes on **IO6** (the Sensor header).
+
 ## Screens
 - **Splash**: the Adventure Van Life logo fades in, followed by a loading bar.
 - **Main**:

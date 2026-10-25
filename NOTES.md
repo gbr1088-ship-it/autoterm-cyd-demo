@@ -29,6 +29,16 @@ The README covers how to build and use the project. This file covers **where thi
 - Touch uses `XPT2046_Touchscreen`, not TFT_eSPI's touch, because it's on a separate SPI bus.
 - The backlight is driven by PWM (LEDC channel 0) for the fades.
 
+## Hardware: Waveshare ESP32-S3-Touch-LCD-7 (env `avl7`, added 25 Oct 2026, not yet tried on the board)
+- **What:** ESP32-S3 N8R8 (8 MB flash, 8 MB octal PSRAM), 800x480 RGB panel, GT911 touch, CH422G IO expander. All of it is in `src/display7.h`; `main.cpp` only has `#if defined(BOARD_7INCH)` around the hardware bits (includes, pins, `setLed`, `backlight`, `readTouch`, `setup`).
+- **How it draws:** `tft` is a 320x240 `TFT_eSprite` subclass (`ScreenSprite`) in PSRAM, so every drawing call in `main.cpp` is unchanged. It records the area drawn on (through TFT_eSPI's virtual primitives, `setWindow` and `pushImage`), and a task on core 0 copies that area to the panel every 16 ms at double size, centred (80 px margins), with each row's edge pixels stretched into the margins. Child sprites go on the screen with `pushSpr()` (it's `pushSprite` on the CYD, `pushToSprite` + mark here). TFT_eSPI still wraps sprite drawing in SPI transactions, so `SPI.begin()` is called on the SD slot's pins (11/12/13).
+- **Pins:** RGB as in Waveshare's wiki (DE 5, VSYNC 3, HSYNC 46, PCLK 7; data B 14,38,18,17,10 / G 39,0,45,48,47,21 / R 1,2,42,41,40). I2C SDA 8, SCL 9 for the GT911 and the CH422G. Touch INT 4. Timing 16 MHz, porches 4/8/8 (Waveshare's example); lower `P7_PCLK_HZ` if the picture flickers or drifts sideways when WiFi is busy (no bounce buffers in IDF 4.4).
+- **CH422G:** each I2C address is a command: write 0x01 to 0x24 to make EXIO outputs, then the levels to 0x38. EXIO1 touch reset, EXIO2 backlight, EXIO3 LCD reset, EXIO4 SD CS, EXIO5 USB/CAN select. The backlight is on/off only, so fades and the brightness setting do nothing on this board.
+- **Probe:** DS18B20 on IO6 (Sensor header). Heater UART pins not chosen yet. No RGB LED.
+- **Updates:** FW_VARIANT `avl7`, so it downloads `autoterm_avl7.bin`; `publish_update.ps1` now builds it too (merged USB file uses `--chip esp32s3` and the bootloader at 0x0).
+- **To check on the board:** picture and colours (if red and blue are swapped, swap the R and B groups in `P7_DATA`), touch lands where tapped, no drift with WiFi/phone app on, the screensaver.
+- **Native layout:** the UI is the CYD's at 2x. A layout made for 800x480 (crisper text, more on each page) would mean redrawing every page at new coordinates.
+
 ## Code layout (`src/main.cpp`)
 - **Gauge geometry:** `GX, GY, GR, GIR`. TFT_eSPI arc angles have 0° at 6 o'clock and run clockwise. The gauge sweeps 50°→310° for 0–35 °C.
 - **Drawing:** dynamic text is drawn into sprites (`tempSpr`, `setSpr`, `infoSpr`, `anim`) to avoid flicker. **Sprite sizes and positions are chosen to stay inside the gauge ring.** Make them bigger and they erase parts of the arc.

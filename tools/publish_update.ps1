@@ -3,7 +3,7 @@
 #   1. raise FW_VERSION in platformio.ini
 #   2. powershell -ExecutionPolicy Bypass -File tools\publish_update.ps1
 #
-# Builds every version (avl, kolex, beneteau), copies them into a local clone of the
+# Builds every version (avl, kolex, beneteau, avl7), copies them into a local clone of the
 # secret Gist named in UPDATE_BASE_URL, writes version.txt with each file's
 # SHA-256 and size, and pushes. Also refreshes the USB files in firmware\.
 # GitHub's download servers can take up to 5 minutes to show the new files.
@@ -11,7 +11,7 @@
 param([string]$GistDir = (Join-Path $PSScriptRoot '..\..\autoterm_updates_gist'))
 $ErrorActionPreference = 'Stop'
 $root = Resolve-Path (Join-Path $PSScriptRoot '..')
-$envs = 'avl', 'kolex', 'beneteau'
+$envs = 'avl', 'kolex', 'beneteau', 'avl7'  # avl7 = the 7" Waveshare screen
 
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
     $desktopGit = Get-ChildItem "$env:LOCALAPPDATA\GitHubDesktop\app-*\resources\app\git\cmd" -Directory |
@@ -51,9 +51,10 @@ foreach ($e in $envs) {
     Copy-Item (Join-Path $build 'firmware.bin') $bin -Force
     $sha = (Get-FileHash $bin -Algorithm SHA256).Hash.ToLower()
     $lines += "$e=$sha $((Get-Item $bin).Length)"
-    # the single-file image for flashing over USB at 0x0
-    & $py "$pio\tool-esptoolpy\esptool.py" --chip esp32 merge_bin -o (Join-Path $root "firmware\autoterm_$e.bin") `
-        --flash_mode dio --flash_freq keep --flash_size 4MB 0x1000 "$build\bootloader.bin" 0x8000 "$build\partitions.bin" `
+    # the single-file image for flashing over USB at 0x0 (the S3 keeps its bootloader at 0x0, not 0x1000)
+    if ($e -eq 'avl7') { $chip = 'esp32s3'; $boot = '0x0'; $size = '8MB' } else { $chip = 'esp32'; $boot = '0x1000'; $size = '4MB' }
+    & $py "$pio\tool-esptoolpy\esptool.py" --chip $chip merge_bin -o (Join-Path $root "firmware\autoterm_$e.bin") `
+        --flash_mode dio --flash_freq keep --flash_size $size $boot "$build\bootloader.bin" 0x8000 "$build\partitions.bin" `
         0xe000 "$pio\framework-arduinoespressif32\tools\partitions\boot_app0.bin" 0x10000 "$build\firmware.bin" | Out-Null
 }
 [IO.File]::WriteAllText($versionFile, ($lines -join "`n") + "`n", (New-Object Text.UTF8Encoding $false))
