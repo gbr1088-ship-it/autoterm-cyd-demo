@@ -19,11 +19,10 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter
 
-W, H = 320, 240
-TOP_BAND = 56  # keep clear for the clock
-
 ap = argparse.ArgumentParser()
 ap.add_argument("image")
+ap.add_argument("--size", nargs=2, type=int, default=[320, 240], metavar=("W", "H"),
+                help="screen size (800 480 for the 7 inch board)")
 ap.add_argument("--top", default="236,240,245", help="gradient colour at the top (r,g,b)")
 ap.add_argument("--bottom", default="196,204,215", help="gradient colour at the bottom (r,g,b)")
 ap.add_argument("--name", default="van")
@@ -31,6 +30,8 @@ ap.add_argument("--scale", type=float, default=1.0, help="size relative to the s
 ap.add_argument("--middle", action="store_true", help="centre vertically instead of standing on the bottom")
 ap.add_argument("--no-shadow", action="store_true")
 a = ap.parse_args()
+W, H = a.size
+TOP_BAND = 56 * H // 240  # keep clear for the clock
 root = Path(__file__).resolve().parent.parent
 top = tuple(int(v) for v in a.top.split(","))
 bottom = tuple(int(v) for v in a.bottom.split(","))
@@ -39,11 +40,11 @@ cut = Image.open(a.image).convert("RGBA")
 cut = cut.crop(cut.getchannel("A").point(lambda v: 255 if v > 24 else 0).getbbox())
 
 # fit the subject into the area under the clock band, with a margin
-box_w, box_h = W - 24, H - TOP_BAND - 10
+box_w, box_h = W - 24 * H // 240, H - TOP_BAND - 10 * H // 240
 scale = min(box_w / cut.width, box_h / cut.height) * a.scale
 cut = cut.resize((round(cut.width * scale), round(cut.height * scale)), Image.LANCZOS)
 x = (W - cut.width) // 2
-y = TOP_BAND + (H - TOP_BAND - cut.height) // 2 if a.middle else H - 8 - cut.height
+y = TOP_BAND + (H - TOP_BAND - cut.height) // 2 if a.middle else H - 8 * H // 240 - cut.height
 
 canvas = Image.new("RGBA", (W, H))
 draw = ImageDraw.Draw(canvas)

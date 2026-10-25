@@ -1,14 +1,14 @@
 // 7 inch ESP32-S3 board: Waveshare ESP32-S3-Touch-LCD-7 (800x480 RGB panel,
 // GT911 touch, CH422G IO expander for the resets and the backlight).
 //
-// The whole user interface is written for the CYD's 320x240 screen. Here `tft`
-// is a 320x240 sprite in memory instead of a real display, so every drawing
-// call in main.cpp works unchanged. A background task copies whatever changed
-// onto the 800x480 panel at double size (640x480, centred), and widens the
-// left and right edge pixels of each row into the 80 px side margins so
-// headers and backgrounds run the full width.
+// The screen is mounted upright (portrait, 480x800). Here `tft` is a 480x800
+// sprite in PSRAM instead of a real display, so every TFT_eSPI drawing call
+// in main.cpp works unchanged; main.cpp lays the pages out for it (see SCR_W,
+// U() and ui7.h). A background task copies whatever changed onto the 800x480
+// panel, turning it a quarter turn and correcting the colours on the way (the
+// panel shows mid-tones too light, so the orange looked washed out).
 //
-// Touch comes from the GT911 over I2C and is scaled back to 320x240.
+// Touch comes from the GT911 over I2C and is turned the same way.
 // The backlight is only on or off: this board switches it through the CH422G
 // rather than a PWM pin, so the brightness setting can't dim it.
 
@@ -39,17 +39,49 @@ const int P7_DATA[16] = {14, 38, 18, 17, 10,  39, 0, 45, 48, 47, 21,  1, 2, 42, 
 #define EXIO_DISP    0x04  // backlight on
 #define EXIO_LCD_RST 0x08
 #define EXIO_SD_CS   0x10  // high = SD card not selected
-#define EXIO_USB_SEL 0x20  // high = USB on the USB port (low gives it to CAN)
+#define EXIO_USB_SEL 0x20  // high gives the USB lines to the CAN chip; low keeps them on the USB socket
 
-// panel timing for the board's 7" 800x480 panel
+// Panel timing for the board's 7" 800x480 panel. The panel reads its frame
+// buffer straight from PSRAM (no bounce buffers in IDF 4.4), and at 16 MHz
+// it jittered while the CPU was busy in PSRAM too; 12 MHz leaves more room.
 #ifndef P7_PCLK_HZ
-#define P7_PCLK_HZ 16000000  // lower it (e.g. 12000000) if the picture flickers or drifts
+#define P7_PCLK_HZ 12000000
 #endif
 
-const int P7_W = 800, P7_H = 480;
-const int UI_W = 320, UI_H = 240;          // what main.cpp draws
-const int UI_SCALE = 2;
-const int UI_OFF_X = (P7_W - UI_W * UI_SCALE) / 2;  // 80 px margins left and right
+const int P7_W = 800, P7_H = 480;   // the panel
+const int UI_W = 480, UI_H = 800;   // what main.cpp draws
+
+// Which way the board is turned: 1 = a quarter turn clockwise from landscape
+// (the panel's left edge at the top, USB sockets at the top), 2 =
+// anticlockwise (USB sockets at the bottom, as mounted in the van).
+#ifndef P7_PORTRAIT
+#define P7_PORTRAIT 2
+#endif
+
+// Colour correction on the way to the panel: each channel goes through
+// v^P7_GAMMA. 1.0 leaves the colours alone; higher makes mid-tones darker
+// and richer (the orange's green 145 and blue 76 come down) while black and
+// full brightness stay put.
+#ifndef P7_GAMMA
+#define P7_GAMMA 1.5
+#endif
+uint8_t gammaR[32], gammaG[64], gammaB[32];
+
+void makeGammaLuts() {
+  for (int i = 0; i < 64; i++) {
+    if (i < 32) {
+      gammaR[i] = lroundf(powf(i / 31.0f, P7_GAMMA) * 31);
+      gammaB[i] = gammaR[i];
+    }
+    gammaG[i] = lroundf(powf(i / 63.0f, P7_GAMMA) * 63);
+  }
+}
+
+// sprite pixel (colours kept byte-swapped) -> corrected panel pixel
+inline uint16_t panelColour(uint16_t s) {
+  uint16_t c = (s >> 8) | (s << 8);
+  return (gammaR[c >> 11] << 11) | (gammaG[(c >> 5) & 0x3F] << 5) | gammaB[c & 0x1F];
+}
 
 // ---------------------------------------------------------------- screen
 // A full-screen sprite that remembers which part of it has been drawn on
@@ -67,6 +99,8 @@ class ScreenSprite : public TFT_eSprite {
   void drawFastVLine(int32_t x, int32_t y, int32_t h, uint32_t c) override { TFT_eSprite::drawFastVLine(x, y, h, c); mark(x, y, 1, h); }
   void drawFastHLine(int32_t x, int32_t y, int32_t w, uint32_t c) override { TFT_eSprite::drawFastHLine(x, y, w, c); mark(x, y, w, 1); }
   void fillRect(int32_t x, int32_t y, int32_t w, int32_t h, uint32_t c) override { TFT_eSprite::fillRect(x, y, w, h, c); mark(x, y, w, h); }
+  // TFT_eSPI's own fillScreen uses the (unused) parent display's size
+  void fillScreen(uint32_t c) { fillRect(0, 0, UI_W, UI_H, c); }
   void setWindow(int32_t xs, int32_t ys, int32_t xe, int32_t ye) override {
     TFT_eSprite::setWindow(xs, ys, xe, ye);
     mark(xs, ys, xe - xs + 1, ye - ys + 1);
@@ -91,7 +125,10 @@ class ScreenSprite : public TFT_eSprite {
     portEXIT_CRITICAL(&lock);
   }
 
-  // copy the changed area to the panel at double size
+  // Copy the changed area to the panel, turned a quarter turn: a few screen
+  // columns at a time, each becoming a panel row.
+  //   P7_PORTRAIT 1: panel x = screen y,           panel y = 479 - screen x
+  //   P7_PORTRAIT 2: panel x = 799 - screen y,     panel y = screen x
   void flush(esp_lcd_panel_handle_t panel) {
     portENTER_CRITICAL(&lock);
     int32_t x0 = dx0, y0 = dy0, x1 = dx1, y1 = dy1;
@@ -99,34 +136,31 @@ class ScreenSprite : public TFT_eSprite {
     portEXIT_CRITICAL(&lock);
     if (x0 > x1 || !created()) return;
 
-    // an edge pixel that changed repaints that row's margin too
-    int ox0 = x0 == 0 ? 0 : UI_OFF_X + x0 * UI_SCALE;
-    int ox1 = x1 == UI_W - 1 ? P7_W - 1 : UI_OFF_X + x1 * UI_SCALE + UI_SCALE - 1;
-    int ow = ox1 - ox0 + 1;
+    int w = y1 - y0 + 1;  // panel row length
     const uint16_t *img = (const uint16_t *)getPointer();
-    for (int y = y0; y <= y1; y += ROWS) {
-      int rows = min(ROWS, (int)(y1 - y + 1));
-      for (int r = 0; r < rows; r++) {
-        const uint16_t *src = img + (y + r) * UI_W;
-        uint16_t *dst = buf + r * UI_SCALE * P7_W;
-        for (int ox = ox0; ox <= ox1; ox++) {
-          int sx = (ox - UI_OFF_X) / UI_SCALE;
-          if (ox < UI_OFF_X) sx = 0;
-          if (sx > UI_W - 1) sx = UI_W - 1;
-          uint16_t c = src[sx];
-          dst[ox - ox0] = (c >> 8) | (c << 8);  // sprites keep their colours byte-swapped
+    for (int a = x0; a <= x1; a += ROWS) {
+      int b = min(a + ROWS - 1, (int)x1);
+      for (int y = y0; y <= y1; y++) {  // screen rows in order, which suits the PSRAM cache
+        const uint16_t *src = img + y * UI_W;
+        for (int x = a; x <= b; x++) {
+#if P7_PORTRAIT == 1
+          buf[(b - x) * w + (y - y0)] = panelColour(src[x]);
+#else
+          buf[(x - a) * w + (y1 - y)] = panelColour(src[x]);
+#endif
         }
-        memcpy(dst + P7_W, dst, ow * 2);  // second line of the doubled row
       }
-      // the buffer rows are P7_W apart, so send each output row on its own
-      for (int r = 0; r < rows * UI_SCALE; r++)
-        esp_lcd_panel_draw_bitmap(panel, ox0, (y * UI_SCALE) + r, ox1 + 1, (y * UI_SCALE) + r + 1, buf + r * P7_W);
+#if P7_PORTRAIT == 1
+      esp_lcd_panel_draw_bitmap(panel, y0, P7_H - 1 - b, y1 + 1, P7_H - a, buf);
+#else
+      esp_lcd_panel_draw_bitmap(panel, P7_W - 1 - y1, a, P7_W - y0, b + 1, buf);
+#endif
     }
   }
 
  private:
-  static const int ROWS = 8;  // source rows converted per pass
-  uint16_t buf[ROWS * UI_SCALE * P7_W];
+  static const int ROWS = 16;  // screen columns (panel rows) converted per pass
+  uint16_t buf[ROWS * P7_W];
   portMUX_TYPE lock = portMUX_INITIALIZER_UNLOCKED;
   int32_t dx0 = 0, dy0 = 0, dx1 = UI_W - 1, dy1 = UI_H - 1;  // everything, at the start
 };
@@ -143,7 +177,8 @@ void panelFlushTask(void *) {
 }
 
 // ---------------------------------------------------------------- IO expander
-uint8_t exio = EXIO_LCD_RST | EXIO_SD_CS | EXIO_USB_SEL;  // backlight off, touch held in reset
+// backlight off, touch held in reset, USB on the USB socket (for flashing and the log)
+uint8_t exio = EXIO_LCD_RST | EXIO_SD_CS;
 
 void exioWrite(uint8_t v) {
   exio = v;
@@ -200,8 +235,8 @@ void touch7Begin() {
   Serial.println("[touch] no GT911 found");
 }
 
-// Finger position in the 320x240 coordinates main.cpp uses. The GT911 only
-// has a new reading every ~10 ms, so in between the last one is repeated.
+// Finger position in screen pixels. The GT911 only has a new reading every
+// ~10 ms, so in between the last one is repeated.
 bool touch7Read(int &x, int &y) {
   static bool down = false;
   static int lx = 0, ly = 0;
@@ -216,11 +251,16 @@ bool touch7Read(int &x, int &y) {
     if ((st & 0x0F) > 0) {
       uint8_t p[4];
       if (gtRead(0x8150, p, 4)) {
-        int px = p[0] | (p[1] << 8), py = p[2] | (p[3] << 8);
-        lx = constrain((px - UI_OFF_X) / UI_SCALE, 0, UI_W - 1);
-        ly = constrain(py / UI_SCALE, 0, UI_H - 1);
+        int px = constrain(p[0] | (p[1] << 8), 0, P7_W - 1), py = constrain(p[2] | (p[3] << 8), 0, P7_H - 1);
+#if P7_PORTRAIT == 1
+        lx = P7_H - 1 - py;
+        ly = px;
+#else
+        lx = py;
+        ly = P7_W - 1 - px;
+#endif
         down = true;
-        Serial.printf("touch raw %d,%d -> %d,%d\n", px, py, lx, ly);
+        Serial.printf("touch %d,%d\n", lx, ly);
       }
     }
     gtWrite(0x814E, 0);
@@ -241,6 +281,7 @@ void display7Begin() {
   // has to exist. It drives nothing: the default pins are the SD card slot's.
   SPI.begin();
 
+  makeGammaLuts();
   tft.setColorDepth(16);
   if (!tft.createSprite(UI_W, UI_H)) Serial.println("[display] no memory for the screen sprite");
 
@@ -273,6 +314,18 @@ void display7Begin() {
   esp_lcd_panel_init(panel7);
   // WiFi runs on core 0 too, at a higher priority, so drawing never holds it up
   xTaskCreatePinnedToCore(panelFlushTask, "panel", 4096, nullptr, 1, nullptr, 0);
+  Serial.printf("[display] %dx%d panel started, portrait %d, gamma %.2f\n", P7_W, P7_H, P7_PORTRAIT, (float)P7_GAMMA);
 
   touch7Begin();
+}
+
+// Screenshots for checking the layout from a computer (main.cpp sends one
+// when an 'S' arrives over USB): "SHOT 480 800\n" followed by the screen's
+// pixels, RGB565 big-endian, row by row (tools/screenshot7.py saves a PNG).
+void display7Screenshot() {
+  if (!tft.created()) return;
+  Serial.printf("SHOT %d %d\n", UI_W, UI_H);
+  Serial.flush();
+  Serial.write((const uint8_t *)tft.getPointer(), UI_W * UI_H * 2);  // byte-swapped = big-endian
+  Serial.flush();
 }
