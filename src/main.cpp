@@ -2662,10 +2662,11 @@ void loop() {
   phoneLoop();
 #if defined(BOARD_7INCH)
   // for checking the layout from a computer over USB:
-  // 'S' sends a screenshot, '0'-'7' shows that page (Page order)
+  // 'S' sends a screenshot, '0'-'7' shows that page (Page order), 'P' presses power
   if (Serial.available()) {
     int c = Serial.read();
     if (c == 'S') display7Screenshot();
+    else if (c == 'P') onPowerPressed();
     else if (c >= '0' && c <= '0' + PAGE_PHONE) {
       lastTouchAt = millis();  // as if tapped, so the screensaver waits
       showPage((Page)(c - '0'));

@@ -15,6 +15,7 @@ TFT_eSprite statSpr(&tft);    // a value inside a stat card (shared by the three
 TFT_eSprite setvalSpr(&tft);  // the setpoint card between - and +
 TFT_eSprite voltSpr(&tft);    // voltage pill in the header
 TFT_eSprite chainSpr(&tft);   // windlass: metres of chain out
+TFT_eSprite powerSpr(&tft);   // the power button, with its glow underneath
 
 extern uint8_t phoneClients;  // phone app section of main.cpp
 void drawTabs();
@@ -26,6 +27,7 @@ void ui7Begin() {
   setvalSpr.createSprite(btnPlus.x - (btnMinus.x + btnMinus.w) - 16, btnMinus.h);
   voltSpr.createSprite(96, 36);
   chainSpr.createSprite(WIN_W - 32, 56);
+  powerSpr.createSprite(btnPower.w, btnPower.h + 10);
 }
 
 // ---------------------------------------------------------------- text
@@ -442,28 +444,32 @@ void drawModeSelector() {
   setBodyFont(tft);
 }
 
-// app-style power button: a green or red pill across the page with the
-// power symbol and what it does; grey while the heater cools down
+// App-style power button: a green or red pill across the page with the
+// power symbol and what it does; grey while the heater cools down. Drawn
+// whole in its own sprite and put on the screen in one go, so a change of
+// colour never shows half drawn or with the old colour round its edges.
 void drawPowerButton() {
   const Button &b = btnPower;
   uint16_t fill = state == ST_COOLDOWN ? C_RAISED : state == ST_OFF ? C_GREEN : C_RED;
   uint16_t ink = state == ST_COOLDOWN ? C_DIM : TFT_WHITE;
   Txt t = state == ST_OFF ? (mode == MODE_VENT ? T_START_FAN : T_START) : state == ST_COOLDOWN ? T_STOPPING : T_STOP;
-  tft.fillRect(b.x, b.y, b.w, b.h + 8, C_BG);
+  TFT_eSprite &s = powerSpr;
+  const int w = b.w, h = b.h;
+  s.fillSprite(C_BG);
   if (state != ST_COOLDOWN)  // the app's soft glow under the button
-    tft.fillSmoothRoundRect(b.x + 24, b.y + 10, b.w - 48, b.h, b.h / 2, tft.alphaBlend(60, fill, C_BG), C_BG);
-  tft.fillSmoothRoundRect(b.x, b.y, b.w, b.h, b.h / 2, fill, C_BG);
-  tft.loadFont(F7_17);
-  int tw = tft.textWidth(tr(t));
-  int x = b.x + (b.w - (24 + 12 + tw)) / 2, cy = b.y + b.h / 2;
+    s.fillSmoothRoundRect(32, 8, w - 64, h, h / 2, s.alphaBlend(32, fill, C_BG), C_BG);
+  s.fillSmoothRoundRect(0, 0, w, h, h / 2, fill, C_BG);
+  s.loadFont(F7_17);
+  int tw = s.textWidth(tr(t));
+  int x = (w - (24 + 12 + tw)) / 2, cy = h / 2;
   int px = x + 12;
-  tft.drawSmoothArc(px, cy + 1, 11, 8, 0, 140, ink, fill, true);
-  tft.drawSmoothArc(px, cy + 1, 11, 8, 220, 360, ink, fill, true);
-  tft.drawWideLine(px, cy - 11, px, cy - 2, 3, ink, fill);
-  tft.setTextDatum(ML_DATUM);
-  tft.setTextColor(ink, fill);
-  tft.drawString(tr(t), x + 36, cy);
-  setBodyFont(tft);
+  s.drawSmoothArc(px, cy + 1, 11, 8, 0, 140, ink, fill, true);
+  s.drawSmoothArc(px, cy + 1, 11, 8, 220, 360, ink, fill, true);
+  s.drawWideLine(px, cy - 11, px, cy - 2, 3, ink, fill);
+  s.setTextDatum(ML_DATUM);
+  s.setTextColor(ink, fill);
+  s.drawString(tr(t), x + 36, cy);
+  pushSpr(s, b.x, b.y);
 }
 
 void drawStatic() {
