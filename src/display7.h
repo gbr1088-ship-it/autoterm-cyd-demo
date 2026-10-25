@@ -327,6 +327,15 @@ void display7Screenshot() {
   if (!tft.created()) return;
   Serial.printf("SHOT %d %d\n", UI_W, UI_H);
   Serial.flush();
-  Serial.write((const uint8_t *)tft.getPointer(), UI_W * UI_H * 2);  // byte-swapped = big-endian
+  // byte-swapped = big-endian; in pieces, as the USB port drops what doesn't fit its buffer
+  const uint8_t *p = (const uint8_t *)tft.getPointer();
+  size_t left = UI_W * UI_H * 2;
+  uint32_t start = millis();
+  while (left && millis() - start < 10000) {
+    size_t n = Serial.write(p, min(left, (size_t)4096));
+    p += n;
+    left -= n;
+    if (!n) delay(1);
+  }
   Serial.flush();
 }

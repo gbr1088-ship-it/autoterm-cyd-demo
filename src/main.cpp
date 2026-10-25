@@ -171,7 +171,7 @@ const uint8_t FONT_S = 2, FONT_XS = 1;
 const int HDR_H = 26;  // header bar
 #endif
 #if defined(BOARD_7INCH)
-const int TEMP_W = 220, TEMP_H = 80, TEMP_DEG_Y = 14;  // big temperature: sprite size, degree sign height
+const int TEMP_W = 220, TEMP_H = 80, TEMP_DEG_Y = 26;  // big temperature: sprite size, degree sign height
 // splash: logo centre, line under it, progress bar, copyright line
 const int SPLASH_LOGO_Y = 330, SPLASH_TEXT_Y = 480, SPLASH_BAR_Y = 520, SPLASH_COPY_Y = 760;
 #else
@@ -180,12 +180,38 @@ const int TEMP_W = 122, TEMP_H = 44, TEMP_DEG_Y = 8;
 const int SPLASH_LOGO_Y = 95, SPLASH_TEXT_Y = 180, SPLASH_BAR_Y = 202, SPLASH_COPY_Y = 228;
 #endif
 
-// the temperature and the clock: digits only (font 8 has nothing else)
+// The 7" draws all its text in smooth (anti-aliased) fonts. One is always
+// loaded on tft (F7_15, the body text), and while it is, TFT_eSPI uses it
+// for every drawString whatever font number is passed, so the shared pages
+// need nothing special; these switch size where they do.
+#if defined(BOARD_7INCH)
+#include "fonts7.h"  // F7_11 ... F7_64, made by tools/ttf2vlw.py
+#endif
+
+// the temperature and the clock (digits only on the 7")
 void setHugeFont(TFT_eSPI &g) {
 #if defined(BOARD_7INCH)
-  g.setTextFont(8);
+  g.loadFont(F7_64);
 #else
   g.setFreeFont(&FreeSansBold24pt7b);
+#endif
+}
+
+// bigger text: the screensaver's day, the WiFi network name, the password
+void setMedFont(TFT_eSPI &g) {
+#if defined(BOARD_7INCH)
+  g.loadFont(F7_20);
+#else
+  g.setFreeFont(F_MED);
+#endif
+}
+
+// back to the body text
+void setBodyFont(TFT_eSPI &g) {
+#if defined(BOARD_7INCH)
+  g.loadFont(F7_15);
+#else
+  g.setTextFont(FONT_S);
 #endif
 }
 
@@ -1247,12 +1273,17 @@ void drawSaverClock(bool force = false) {
   saverSpr.setTextColor(img.light ? C_BG : C_TEXT);
   saverSpr.drawString(buf, U(12), SAVER_BAND_H / 2 - U(1));
   saverSpr.setTextDatum(MR_DATUM);
+#if defined(BOARD_7INCH)
+  setMedFont(saverSpr);
+#else
   saverSpr.setFreeFont(F_LABEL);
+#endif
   saverSpr.drawString(DAY_NAME[lang][t.tm_wday], SCR_W - U(12), U(16));
   const char *month = MONTH_NAME[lang][t.tm_mon];
   if (lang == LANG_ES) snprintf(buf, sizeof buf, "%d de %s de %d", t.tm_mday, month, t.tm_year + 1900);
   else snprintf(buf, sizeof buf, "%d %s %d", t.tm_mday, month, t.tm_year + 1900);
   saverSpr.setTextColor(img.light ? rgb(80, 64, 54) : rgb(222, 212, 204));
+  setBodyFont(saverSpr);
   saverSpr.drawString(buf, SCR_W - U(12), U(38), FONT_S);
   pushSpr(saverSpr, 0, 0);
 }
@@ -1989,9 +2020,9 @@ void drawPhoneDetails() {
   tft.drawString(tr(T_PASSWORD), PH_X, y + U(42), FONT_S);
   tft.setTextColor(hi, C_BG);
 #if defined(BOARD_7INCH)
-  tft.setFreeFont(F_MED);
+  setMedFont(tft);
   tft.drawString(phonePass[0] ? phonePass : "--------", PH_X, y + U(58));
-  tft.setTextFont(FONT_S);
+  setBodyFont(tft);
 #else
   tft.drawString(phonePass[0] ? phonePass : "--------", PH_X, y + U(58), 4);
 #endif
@@ -2129,10 +2160,10 @@ void drawWifiPage() {
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(C_TEXT, C_BG);
   tft.drawString(tr(T_WIFI_HELP1), SCR_W / 2, U(54), FONT_S);
-  tft.setFreeFont(F_MED);
+  setMedFont(tft);
   tft.setTextColor(C_YELLOW);
   tft.drawString(wifiApName(), SCR_W / 2, U(88));
-  tft.setTextFont(FONT_S);
+  setBodyFont(tft);
   tft.setTextColor(C_TEXT, C_BG);
   tft.drawString(tr(T_WIFI_HELP2), SCR_W / 2, U(124), FONT_S);
   tft.setTextColor(C_DIM, C_BG);
@@ -2590,6 +2621,7 @@ void setup() {
   tempSpr.createSprite(TEMP_W, TEMP_H);
 #if defined(BOARD_7INCH)
   ui7Begin();
+  setBodyFont(tft);
 #else
   anim.createSprite(56, 34);  // wide enough for "CABINE"; at y 60 its corners still clear the ring
   setSpr.createSprite(112, 22);

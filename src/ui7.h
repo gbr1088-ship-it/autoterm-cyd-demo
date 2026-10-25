@@ -29,8 +29,11 @@ void ui7Begin() {
 }
 
 // ---------------------------------------------------------------- text
+// All text is in the smooth fonts of fonts7.h, at the app's pixel sizes.
+// A function that loads another size on tft puts the body font (F7_15)
+// back when it's done, since main.cpp's pages expect it.
 // Uppercase labels are letter-spaced as in the app. These use whatever font
-// is set on g (setTextFont / setFreeFont) and draw left to right from x.
+// is loaded on g and draw left to right from x.
 int charWidth(TFT_eSPI &g, char ch) {
   char c[2] = {ch == ' ' ? 't' : ch, 0};  // a lone space measures 0 wide
   return g.textWidth(c);
@@ -57,9 +60,10 @@ void drawSpacedCentre(TFT_eSPI &g, const char *s, int cx, int y, int sp) {
   drawSpaced(g, s, cx - spacedWidth(g, s, sp) / 2, y, sp);
 }
 
-// Font 2 text wrapped onto lines no wider than w; returns the y after it.
+// 13 px text wrapped onto lines no wider than w; returns the y after it.
 int drawWrapped(const char *s, int x, int y, int w, int lineH) {
   char line[96];
+  tft.loadFont(F7_13);
   tft.setTextDatum(TL_DATUM);
   while (*s) {
     int n = 0, lastSpace = -1;
@@ -67,15 +71,16 @@ int drawWrapped(const char *s, int x, int y, int w, int lineH) {
       line[n] = s[n];
       line[n + 1] = 0;
       if (s[n] == ' ') lastSpace = n;
-      if (tft.textWidth(line, 2) > w && lastSpace > 0) { n = lastSpace; break; }
+      if (tft.textWidth(line) > w && lastSpace > 0) { n = lastSpace; break; }
       n++;
     }
     line[n] = 0;
-    tft.drawString(line, x, y, 2);
+    tft.drawString(line, x, y);
     s += n;
     while (*s == ' ') s++;
     y += lineH;
   }
+  setBodyFont(tft);
   return y;
 }
 
@@ -85,12 +90,12 @@ int drawWrapped(const char *s, int x, int y, int w, int lineH) {
 void drawHeader(bool tabs) {
   tft.fillRect(0, 0, SCR_W, HDR_H, C_BG);
   tft.pushImage(16, (HDR_H - AVL_LOGO_SMALL_H) / 2, AVL_LOGO_SMALL_W, AVL_LOGO_SMALL_H, avl_logo_small_bitmap);
-  tft.setFreeFont(&FreeSansBold12pt7b);
-  tft.setTextColor(C_TEXT);
-  int x = drawSpaced(tft, "ADVENTURE", 78, 20, 1);
-  tft.setTextColor(C_ORANGE);
-  drawSpaced(tft, "VAN LIFE", x + 8, 20, 3);
-  tft.setTextFont(FONT_S);
+  tft.loadFont(F7_17);
+  tft.setTextColor(C_TEXT, C_BG);
+  int x = drawSpaced(tft, "ADVENTURE", 78, 21, 1);
+  tft.setTextColor(C_ORANGE, C_BG);
+  drawSpaced(tft, "VAN LIFE", x + 6, 21, 3);
+  setBodyFont(tft);
   tft.drawFastHLine(0, HDR_H - 1, SCR_W, tft.alphaBlend(77, C_ORANGE, C_TRACK));
   if (tabs) drawTabs();
 }
@@ -99,25 +104,33 @@ void drawHeader(bool tabs) {
 void drawPill(const char *text, uint16_t col) {
   tft.fillRect(76, 34, 290, 22, C_BG);
   tft.fillSmoothCircle(83, 45, 4, col, C_BG);
+  tft.loadFont(F7_13);
   tft.setTextDatum(ML_DATUM);
   tft.setTextColor(col == C_RED ? C_RED : C_DIM, C_BG);
-  tft.drawString(text, 94, 45, 2);
+  tft.drawString(text, 94, 45);
+  setBodyFont(tft);
 }
 
+// the voltage in a pill on the right of the header
 void drawVoltage() {
   char buf[10];
   snprintf(buf, sizeof buf, "%.1f", voltage);
-  voltSpr.fillSprite(C_BG);
-  voltSpr.fillSmoothRoundRect(0, 0, voltSpr.width(), voltSpr.height(), voltSpr.height() / 2, C_PANEL, C_BG);
-  voltSpr.setFreeFont(&FreeSansBold12pt7b);
-  int w = voltSpr.textWidth(buf) + 2 + voltSpr.textWidth("V", 2);
-  int x = (voltSpr.width() - w) / 2;
-  voltSpr.setTextDatum(ML_DATUM);
-  voltSpr.setTextColor(voltage < 11.8f ? C_RED : C_TEXT);
-  voltSpr.drawString(buf, x, voltSpr.height() / 2 - 1);
-  voltSpr.setTextColor(C_DIM);
-  voltSpr.drawString("V", x + w - voltSpr.textWidth("V", 2), voltSpr.height() / 2 + 2, 2);
-  pushSpr(voltSpr, SCR_W - 16 - voltSpr.width(), (HDR_H - voltSpr.height()) / 2);
+  TFT_eSprite &s = voltSpr;
+  const int h = s.height();
+  s.fillSprite(C_BG);
+  s.fillSmoothRoundRect(0, 0, s.width(), h, h / 2, C_PANEL, C_BG);
+  s.loadFont(F7_13);
+  int vw = s.textWidth("V");
+  s.loadFont(F7_17);
+  int x = (s.width() - (s.textWidth(buf) + 2 + vw)) / 2;
+  s.setTextDatum(L_BASELINE);
+  s.setTextColor(voltage < 11.8f ? C_RED : C_TEXT, C_PANEL);
+  s.drawString(buf, x, h / 2 + 6);
+  x += s.textWidth(buf) + 2;
+  s.loadFont(F7_13);
+  s.setTextColor(C_DIM, C_PANEL);
+  s.drawString("V", x, h / 2 + 6);
+  pushSpr(s, SCR_W - 16 - s.width(), (HDR_H - h) / 2);
 }
 
 void drawTabIcon(int i, int cx, int cy, uint16_t col) {
@@ -154,7 +167,7 @@ void drawTabs() {
   const Txt names[4] = {T_TAB_HEAT, T_TAB_UTIL, T_TAB_PHONE, T_TAB_SETTINGS};
   tft.fillRect(0, TAB_Y, SCR_W, SCR_H - TAB_Y, C_BG);
   tft.drawFastHLine(0, TAB_Y, SCR_W, C_TRACK);
-  tft.setFreeFont(&FreeSansBold9pt7b);
+  tft.loadFont(F7_13);
   tft.setTextDatum(MC_DATUM);
   for (int i = 0; i < 4; i++) {
     const Button &b = btnTab[i];
@@ -162,10 +175,10 @@ void drawTabs() {
     int cx = b.x + b.w / 2;
     if (i == sel) tft.fillSmoothRoundRect(b.x + b.w * 3 / 10, TAB_Y - 2, b.w * 2 / 5, 5, 2, C_ORANGE, C_BG);
     drawTabIcon(i, cx, TAB_Y + 22, col);
-    tft.setTextColor(col);
+    tft.setTextColor(col, C_BG);
     tft.drawString(tr(names[i]), cx, TAB_Y + 47);
   }
-  tft.setTextFont(FONT_S);
+  setBodyFont(tft);
 }
 
 // ---------------------------------------------------------------- heater page
@@ -179,6 +192,7 @@ void gaugePoint(float t, float r, float &x, float &y) {  // t: 0..35 C along the
 
 // ticks every 5 C and the 0 / 10 / 20 / 30 labels, inside the ring
 void drawGaugeScale() {
+  tft.loadFont(F7_13);
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(C_DIM, C_BG);
   for (int t = 0; t <= 35; t += 5) {
@@ -190,9 +204,10 @@ void drawGaugeScale() {
       char buf[4];
       snprintf(buf, sizeof buf, "%d", t);
       gaugePoint(t, G_IN - 30, x0, y0);
-      tft.drawString(buf, x0, y0, 2);
+      tft.drawString(buf, x0, y0);
     }
   }
+  setBodyFont(tft);
 }
 
 // 52 segments lit up to the cabin temperature, peach -> orange -> red; the
@@ -218,17 +233,20 @@ void drawGauge() {
 void drawTemperature() {
   char buf[12];
   snprintf(buf, sizeof buf, "%.1f", cabinTemp);
-  tempSpr.fillSprite(C_BG);
-  setHugeFont(tempSpr);
-  tempSpr.setTextDatum(MC_DATUM);
-  tempSpr.setTextColor(C_TEXT);
-  int w = tempSpr.textWidth(buf);
-  int cx = tempSpr.width() / 2 - 10;
-  tempSpr.drawString(buf, cx, tempSpr.height() / 2);
-  drawDegree(tempSpr, cx + w / 2 + 9, TEMP_DEG_Y, 4, C_DIM, C_BG);
-  tempSpr.setTextDatum(TL_DATUM);
-  tempSpr.setTextColor(C_DIM);
-  tempSpr.drawString("C", cx + w / 2 + 15, TEMP_DEG_Y - 8, 4);
+  TFT_eSprite &s = tempSpr;
+  s.fillSprite(C_BG);
+  setHugeFont(s);
+  s.setTextDatum(L_BASELINE);
+  s.setTextColor(C_TEXT, C_BG);
+  int w = s.textWidth(buf);
+  int x = (s.width() - w) / 2 - 12, base = s.height() - 12;
+  s.drawString(buf, x, base);
+  // superscript degree C, as the app's 22 px sup
+  drawDegree(s, x + w + 8, TEMP_DEG_Y, 4, C_DIM, C_BG);
+  s.loadFont(F7_20);
+  s.setTextDatum(TL_DATUM);
+  s.setTextColor(C_DIM, C_BG);
+  s.drawString("C", x + w + 14, TEMP_DEG_Y - 5);
   pushSpr(tempSpr, GX - tempSpr.width() / 2, GY - 10 - tempSpr.height() / 2);
   drawGaugeScale();  // the sprite's corners cover the 10 and 30 labels
 }
@@ -238,7 +256,7 @@ void drawCabinLabel() {
   const int y = GY + 46;
   tft.fillRect(GX - 100, y - 9, 200, 18, C_BG);
   const char *a = tr(T_CABIN), *b = tr(sensorOk ? T_PROBE : T_SIMULATED);
-  tft.setTextFont(2);
+  tft.loadFont(F7_11);
   const int gap = 16;  // with a middle dot in it (the font has none)
   int w = spacedWidth(tft, a, 2) + gap + spacedWidth(tft, b, 2);
   tft.setTextColor(C_DIM, C_BG);
@@ -246,6 +264,7 @@ void drawCabinLabel() {
   tft.fillSmoothCircle(x - 2 + gap / 2, y, 1, C_DIM, C_BG);
   tft.setTextColor(C_TEXT, C_BG);
   drawSpaced(tft, b, x - 2 + gap, y, 2);
+  setBodyFont(tft);
 }
 
 const char *fmtTime(uint32_t ms, char *buf, size_t n) {
@@ -260,19 +279,23 @@ void drawGaugePill() {
   const char *txt = showNoLink() ? tr(T_NO_LINK) : tr(stateText(state));
   uint16_t col = showNoLink() ? C_RED : STATE_COLOR[state];
   if (state != ST_OFF && !showNoLink()) fmtTime(millis() - stateSince, tbuf, sizeof tbuf);
-  pillSpr.fillSprite(C_BG);
-  pillSpr.setTextFont(2);
-  int tw = spacedWidth(pillSpr, txt, 2), timeW = tbuf[0] ? pillSpr.textWidth(tbuf) + 10 : 0;
-  int w = 14 + 7 + 8 + tw + timeW + 14, h = pillSpr.height();
-  int x = (pillSpr.width() - w) / 2;
-  pillSpr.fillSmoothRoundRect(x, 0, w, h, h / 2, C_LINE, C_BG);
-  pillSpr.fillSmoothRoundRect(x + 1, 1, w - 2, h - 2, h / 2 - 1, C_PANEL, C_LINE);
-  pillSpr.fillSmoothCircle(x + 17, h / 2, 3, col, C_PANEL);
-  pillSpr.setTextColor(col);
-  int tx = drawSpaced(pillSpr, txt, x + 29, h / 2, 2);
+  TFT_eSprite &s = pillSpr;
+  s.fillSprite(C_BG);
+  s.loadFont(F7_13);
+  int timeW = tbuf[0] ? s.textWidth(tbuf) + 10 : 0;
+  s.loadFont(F7_11);
+  int tw = spacedWidth(s, txt, 2);
+  int w = 14 + 7 + 8 + tw + timeW + 14, h = s.height();
+  int x = (s.width() - w) / 2;
+  s.fillSmoothRoundRect(x, 0, w, h, h / 2, C_LINE, C_BG);
+  s.fillSmoothRoundRect(x + 1, 1, w - 2, h - 2, h / 2 - 1, C_PANEL, C_LINE);
+  s.fillSmoothCircle(x + 17, h / 2, 3, col, C_PANEL);
+  s.setTextColor(col, C_PANEL);
+  int tx = drawSpaced(s, txt, x + 29, h / 2, 2);
   if (tbuf[0]) {
-    pillSpr.setTextColor(C_DIM);
-    pillSpr.drawString(tbuf, tx + 10, h / 2);
+    s.loadFont(F7_13);
+    s.setTextColor(C_DIM, C_PANEL);
+    s.drawString(tbuf, tx + 8, h / 2);
   }
   pushSpr(pillSpr, GX - pillSpr.width() / 2, GY + 96);  // in the ring's gap at the bottom
 }
@@ -288,25 +311,29 @@ const Txt STAT_LABEL[3] = {T_STAT_FAN, T_STAT_OUT, T_STAT_TIME};
 int statX(int i) { return 16 + i * 152; }
 
 void drawStatCards() {
-  tft.setTextFont(2);
+  tft.loadFont(F7_11);
   for (int i = 0; i < 3; i++) {
     tft.fillSmoothRoundRect(statX(i), STATS_Y, 144, 60, 12, C_PANEL, C_BG);
     tft.setTextColor(C_DIM, C_PANEL);
-    drawSpaced(tft, tr(STAT_LABEL[i]), statX(i) + 12, STATS_Y + 16, 1);
+    drawSpaced(tft, tr(STAT_LABEL[i]), statX(i) + 12, STATS_Y + 17, 1);
   }
+  setBodyFont(tft);
 }
 
 void drawStatValue(int i, const char *value, const char *unit) {
-  statSpr.fillSprite(C_PANEL);
-  statSpr.setFreeFont(&FreeSansBold12pt7b);
-  statSpr.setTextDatum(ML_DATUM);
-  statSpr.setTextColor(C_TEXT);
-  statSpr.drawString(value, 0, 14);
+  TFT_eSprite &s = statSpr;
+  s.fillSprite(C_PANEL);
+  s.loadFont(F7_20);
+  s.setTextDatum(L_BASELINE);
+  s.setTextColor(C_TEXT, C_PANEL);
+  s.drawString(value, 0, 22);
   if (unit) {
-    statSpr.setTextColor(C_DIM);
-    statSpr.drawString(unit, statSpr.textWidth(value) + 3, 17, 2);
+    int x = s.textWidth(value) + 2;
+    s.loadFont(F7_13);
+    s.setTextColor(C_DIM, C_PANEL);
+    s.drawString(unit, x, 22);
   }
-  pushSpr(statSpr, statX(i) + 12, STATS_Y + 26);
+  pushSpr(s, statX(i) + 12, STATS_Y + 26);
 }
 
 void drawStats() {
@@ -350,21 +377,25 @@ void drawSetValue() {
   int w = s.width(), h = s.height();
   s.fillSprite(C_BG);
   s.fillSmoothRoundRect(0, 0, w, h, 16, C_PANEL, C_BG);
-  s.setTextFont(2);
-  s.setTextColor(MODE_COLOR[mode]);
-  drawSpacedCentre(s, tr(label), w / 2, 18, 2);
-  s.setFreeFont(&FreeSansBold18pt7b);
-  int vw = s.textWidth(buf), uw = s.textWidth(unit, 2) + (mode == MODE_TEMP ? 10 : 0);
+  s.loadFont(F7_11);
+  s.setTextColor(MODE_COLOR[mode], C_PANEL);
+  drawSpacedCentre(s, tr(label), w / 2, 17, 2);
+  s.loadFont(F7_15);
+  int uw = s.textWidth(unit) + (mode == MODE_TEMP ? 8 : 0);
+  s.loadFont(F7_30);
+  int vw = s.textWidth(buf);
   int x = (w - vw - 4 - uw) / 2;
-  s.setTextDatum(ML_DATUM);
-  s.setTextColor(C_TEXT);
-  s.drawString(buf, x, 44);
-  s.setTextColor(C_DIM);
+  const int base = 56;
+  s.setTextDatum(L_BASELINE);
+  s.setTextColor(C_TEXT, C_PANEL);
+  s.drawString(buf, x, base);
+  s.loadFont(F7_15);
+  s.setTextColor(C_DIM, C_PANEL);
   if (mode == MODE_TEMP) {
-    drawDegree(s, x + vw + 7, 42, 2, C_DIM, C_PANEL);
-    s.drawString(unit, x + vw + 12, 49, 2);
+    drawDegree(s, x + vw + 7, base - 12, 2, C_DIM, C_PANEL);
+    s.drawString(unit, x + vw + 12, base);
   } else {
-    s.drawString(unit, x + vw + 5, 49, 2);
+    s.drawString(unit, x + vw + 5, base);
   }
   pushSpr(s, btnMinus.x + btnMinus.w + 8, btnMinus.y);
 }
@@ -376,17 +407,18 @@ bool modeAllowed(int m) {
 
 void drawModeSelector() {
   tft.fillSmoothRoundRect(SEG_X, SEG_Y, SEG_W, SEG_H, 14, C_PANEL, C_BG);
-  tft.setFreeFont(&FreeSansBold9pt7b);
+  tft.loadFont(F7_13);
   const int bw = (SEG_W - 16) / 3;
   for (int i = 0; i < 3; i++) {
     int x = SEG_X + 4 + i * (bw + 4);
     bool on = i == mode;
-    if (on) tft.fillSmoothRoundRect(x, SEG_Y + 4, bw, SEG_H - 8, 10, MODE_COLOR[i], C_PANEL);
+    uint16_t fill = on ? MODE_COLOR[i] : C_PANEL;
+    if (on) tft.fillSmoothRoundRect(x, SEG_Y + 4, bw, SEG_H - 8, 10, fill, C_PANEL);
     uint16_t col = on ? TFT_WHITE : modeAllowed(i) ? C_DIM : tft.alphaBlend(77, C_DIM, C_PANEL);
-    tft.setTextColor(col);
+    tft.setTextColor(col, fill);
     drawSpacedCentre(tft, tr(modeText(i)), x + bw / 2, SEG_Y + SEG_H / 2, 2);
   }
-  tft.setTextFont(FONT_S);
+  setBodyFont(tft);
 }
 
 // app-style power button: a green or red pill across the page with the
@@ -400,7 +432,7 @@ void drawPowerButton() {
   if (state != ST_COOLDOWN)  // the app's soft glow under the button
     tft.fillSmoothRoundRect(b.x + 24, b.y + 10, b.w - 48, b.h, b.h / 2, tft.alphaBlend(60, fill, C_BG), C_BG);
   tft.fillSmoothRoundRect(b.x, b.y, b.w, b.h, b.h / 2, fill, C_BG);
-  tft.setFreeFont(&FreeSansBold12pt7b);
+  tft.loadFont(F7_17);
   int tw = tft.textWidth(tr(t));
   int x = b.x + (b.w - (24 + 12 + tw)) / 2, cy = b.y + b.h / 2;
   int px = x + 12;
@@ -408,17 +440,18 @@ void drawPowerButton() {
   tft.drawSmoothArc(px, cy + 1, 11, 8, 220, 360, ink, fill, true);
   tft.drawWideLine(px, cy - 11, px, cy - 2, 3, ink, fill);
   tft.setTextDatum(ML_DATUM);
-  tft.setTextColor(ink);
-  tft.drawString(tr(t), x + 36, cy - 1);
-  tft.setTextFont(FONT_S);
+  tft.setTextColor(ink, fill);
+  tft.drawString(tr(t), x + 36, cy);
+  setBodyFont(tft);
 }
 
 void drawStatic() {
   tft.fillScreen(C_BG);
   drawHeader(true);
-  tft.setTextFont(2);
+  tft.loadFont(F7_11);
   tft.setTextColor(C_DIM, C_BG);
   drawSpacedCentre(tft, tr(T_MAKER), SCR_W / 2, HDR_H + 22, 3);
+  setBodyFont(tft);
   drawGaugeScale();
   drawStatCards();
   drawAdjButton(btnMinus, false, false);
@@ -514,14 +547,14 @@ void drawToggle(int i) {
   int cx = b.x + b.w / 2, iy = b.y + 36;
   if (t.on) tft.fillSmoothCircle(cx, iy, 24, tft.alphaBlend(50, col, fill), fill);  // glow
   drawTileIcon(i, cx, iy, t.on ? col : C_DIM, t.on ? tft.alphaBlend(50, col, fill) : fill);
-  tft.setFreeFont(&FreeSansBold9pt7b);
+  tft.loadFont(F7_13);
   tft.setTextDatum(MC_DATUM);
-  tft.setTextColor(C_TEXT);
+  tft.setTextColor(C_TEXT, fill);
   tft.drawString(tr(t.name), cx, b.y + 80);
-  tft.setTextFont(2);
-  tft.setTextColor(t.on ? col : C_DIM);
+  tft.loadFont(F7_11);
+  tft.setTextColor(t.on ? col : C_DIM, fill);
   drawSpacedCentre(tft, tr(t.on ? t.onText : t.offText), cx, b.y + 106, 2);
-  tft.setTextFont(FONT_S);
+  setBodyFont(tft);
 }
 
 // UP / DOWN: hold to run. Greyed out on a remote, which can't run it.
@@ -534,11 +567,11 @@ void drawWinchButton(const Button &b, bool up, bool active) {
   uint16_t ink = active ? C_BG : col;
   if (up) tft.fillTriangle(cx - 30, cy + 18, cx + 30, cy + 18, cx, cy - 24, ink);
   else tft.fillTriangle(cx - 30, cy - 18, cx + 30, cy - 18, cx, cy + 24, ink);
-  tft.setFreeFont(&FreeSansBold12pt7b);
+  tft.loadFont(F7_17);
   tft.setTextDatum(MC_DATUM);
-  tft.setTextColor(active ? C_BG : isRemote() ? C_DIM : C_TEXT);
+  tft.setTextColor(active ? C_BG : isRemote() ? C_DIM : C_TEXT, fill);
   tft.drawString(tr(up ? T_UP : T_DOWN), cx, b.y + b.h * 4 / 5);
-  tft.setTextFont(FONT_S);
+  setBodyFont(tft);
 }
 
 // the card's state line, the chain counter and the bar under it
@@ -547,20 +580,24 @@ void drawWinchStatus() {
                        : chainOut <= 0 ? T_ANCHOR_HOME : T_STOPPED);
   uint16_t col = winch == WIN_UP ? C_GREEN : winch == WIN_DOWN ? C_ORANGE : C_DIM;
   tft.fillRect(WIN_X + WIN_W / 2, WIN_Y + 14, WIN_W / 2 - 16, 22, C_PANEL);
-  tft.setTextFont(2);
+  tft.loadFont(F7_11);
   tft.setTextColor(col, C_PANEL);
   drawSpaced(tft, txt, WIN_X + WIN_W - 16 - spacedWidth(tft, txt, 2), WIN_Y + 25, 2);
+  setBodyFont(tft);
 
   char buf[12];
   snprintf(buf, sizeof buf, "%.1f", chainOut);
-  chainSpr.fillSprite(C_PANEL);
-  chainSpr.setFreeFont(&FreeSansBold24pt7b);
-  chainSpr.setTextDatum(ML_DATUM);
-  chainSpr.setTextColor(C_TEXT);
-  chainSpr.drawString(buf, 0, 26);
-  chainSpr.setTextColor(C_DIM);
-  chainSpr.drawString(tr(T_CHAIN_OUT), chainSpr.textWidth(buf) + 8, 34, 2);
-  pushSpr(chainSpr, WIN_X + 16, WIN_Y + 44);
+  TFT_eSprite &s = chainSpr;
+  s.fillSprite(C_PANEL);
+  s.loadFont(F7_44);
+  s.setTextDatum(L_BASELINE);
+  s.setTextColor(C_TEXT, C_PANEL);
+  s.drawString(buf, 0, 46);
+  int x = s.textWidth(buf) + 8;
+  s.loadFont(F7_15);
+  s.setTextColor(C_DIM, C_PANEL);
+  s.drawString(tr(T_CHAIN_OUT), x, 46);
+  pushSpr(s, WIN_X + 16, WIN_Y + 44);
 
   // how much of the 60 m is out, peach -> orange like the app's bar
   const int bx = WIN_X + 16, by = WIN_Y + 110, bw = WIN_W - 32, bh = 10;
@@ -584,17 +621,18 @@ void drawUtilPage() {
   drawWrapped(tr(T_BILGE_NOTE), 18, btnToggle[0].y + btnToggle[0].h + 10, SCR_W - 36, 18);
 
   tft.fillSmoothRoundRect(WIN_X, WIN_Y, WIN_W, WIN_H, 16, C_PANEL, C_BG);
-  tft.setTextFont(2);
+  tft.loadFont(F7_11);
   tft.setTextColor(C_DIM, C_PANEL);
   drawSpaced(tft, tr(T_WINDLASS), WIN_X + 16, WIN_Y + 25, 2);
-  tft.setTextColor(C_DIM, C_PANEL);
+  tft.loadFont(F7_13);
   tft.setTextDatum(TL_DATUM);
   const int sy = WIN_Y + 128;  // the scale under the bar
-  tft.drawString("0 m", WIN_X + 16, sy, 2);
+  tft.drawString("0 m", WIN_X + 16, sy);
   tft.setTextDatum(TC_DATUM);
-  tft.drawString("30", WIN_X + WIN_W / 2, sy, 2);
+  tft.drawString("30", WIN_X + WIN_W / 2, sy);
   tft.setTextDatum(TR_DATUM);
-  tft.drawString("60 m", WIN_X + WIN_W - 16, sy, 2);
+  tft.drawString("60 m", WIN_X + WIN_W - 16, sy);
+  setBodyFont(tft);
   drawWinchButton(btnWinUp, true, winch == WIN_UP);
   drawWinchButton(btnWinDown, false, winch == WIN_DOWN);
   if (isRemote()) {
