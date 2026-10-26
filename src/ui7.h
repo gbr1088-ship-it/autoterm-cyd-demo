@@ -638,8 +638,10 @@ void drawWinchStatus() {
 }
 
 void drawUtilPill() {
-  if (showNoLink()) drawPill(tr(T_NO_LINK), C_RED);
-  else drawPill(tr(T_DEMO_RELAYS), C_ORANGE);
+  const char *txt;
+  uint16_t col;
+  utilPill(txt, col);
+  drawPill(txt, col);
 }
 
 void drawUtilPage() {

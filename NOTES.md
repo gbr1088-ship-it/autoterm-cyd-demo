@@ -53,7 +53,7 @@ The README covers how to build and use the project. This file covers **where thi
 - **Colours:** constants at the top. `C_RED` = Autoterm Pantone 185 red.
 - **Pages:** `page` is `PAGE_HOME`, `PAGE_HEATER` or `PAGE_UTIL`; `showPage()` switches and redraws. Touch goes through `handleTouch()` → `onPress()`, which dispatches by page. The heater simulation runs on every page; drawing only happens for the visible one, and `setState()` only redraws heater widgets when the heater page is showing.
 - **Home button:** `btnHome` covers the house icon *and* the logo (0,0 112×31) because the icon alone was too small for a finger. It stops above y = 32 where the utilities tiles start.
-- **Utilities:** `toggles[]` (lights, water pump, bilge) and `winch` / `chainOut` for the windlass. `RELAY LINK` comments in `onToggle()` and `setWinch()` mark where relay-box commands go. `simulateWinch()` moves the chain counter (0.5 m/s, stops at 0 and 60 m).
+- **Utilities:** `toggles[]` (lights, water pump, bilge) and `winch` / `chainOut` for the windlass. With a paired relay box, `onToggle()` and `setWinch()` ask the box and `handleBoxState()` / `boxLoop()` keep the two in step (see "the wireless relay box" below); without one they are simulated. `simulateWinch()` moves the chain counter (0.5 m/s, stops at 0 and 60 m).
 - **Screensaver:** `PAGE_SAVER` starts after 60 s without a touch and shows a logo with the date and time. There are **two firmware versions** (PlatformIO environments `kolex`, the default, and `beneteau`; `pio run -e beneteau -t upload`) that differ only in the logo, and ready-made web-flasher files in `firmware/`: the white Beneteau logo on navy (`src/beneteau.h`, from beneteau.com's `logo-beneteau-white.svg` → `assets/beneteau_logo_white.png` via resvg-py → `tools/cutout2background.py`; white clock) and the Kolex logo (van-conversion firm, kolex-equipement.com) on a light gradient (`src/kolex.h`, from the site's `Kolex_JPG.jpg` → white removed with numpy into `assets/kolex_logo.png` → `tools/cutout2background.py`; dark clock). Both are trademarks, own use only. An earlier version used the user's van (`assets/screensaver.jpg`, cut out with rembg into `assets/van_cutout.png`); a tap returns to the previous page without pressing anything. `SAVER_IMAGES[]` can hold several images and alternates every 30 s. The clock starts at the firmware build time and resets on power-up (no RTC or internet time yet). Use `millis()` rather than the loop's `now` for the idle check, or the unsigned subtraction wraps and the screensaver fires on every touch.
 - **Settings page:** reached from the SETTINGS bar at the bottom of the home page. Language (English / French / Spanish), brightness (10–100% in 10% steps; the screensaver runs at 60% of it) and screensaver on/off. Saved in NVS with `Preferences` (namespace `ui`), loaded in `setup()` before the splash.
 - **Second screen (link):** the user has a second CYD (COM5 on the laptop; needs a USB-A→C or micro-USB cable, a laptop USB-C↔C cable gives it no power). Same firmware on both; Settings → LINK picks OFF / MAIN / REMOTE (French: NON / ECRAN 1 / ECRAN 2). ESP-NOW on channel 1: the main screen broadcasts a `StatePkt` every 250 ms (and straight after a remote's command); a remote draws from it, sends `CmdPkt` button presses back (power, mode, ±, toggles) and shows a red NO LINK after 2 s of silence. The windlass is main-screen only (greyed out on a remote). Pairing: MAIN opens a 60 s window (closes as soon as a remote joins), REMOTE follows the first main that's pairing; both are saved in NVS. Tested on both boards. The radio stack took the firmware from 48% to 84% of the app partition: switch to a bigger partition table (e.g. `huge_app.csv`, no OTA) before adding much more.
@@ -129,22 +129,27 @@ The README covers how to build and use the project. This file covers **where thi
 - In TEMP mode, does the heater rely on the panel's built-in temperature sensor? If so, the CYD must send its own reading.
 - Can the original panel stay connected alongside the CYD? That needs two UARTs. The current plan is to replace the panel instead.
 
-## Utilities: relay box plan (agreed with the user, not built yet)
-The screen will also control lights, water pump, bilge pump and the anchor windlass on a boat, through a separate wireless relay box.
-- **Link:** ESP-NOW between the CYD and an ESP32 relay board. No router needed, a few ms latency, good range on a boat. Bluetooth and WiFi were considered and rejected (pairing hassle / needs a router).
-- **Relay board:** an ESP32 relay board that runs straight from 12 V, e.g. Kincony KC868-A4/A8, or a generic "ESP32 4-channel relay board, 7–30 V input". Not bought yet.
-- **Wiring:** the board's ~10 A relays are control switches only.
-  - Lights: direct if under ~5 A, otherwise via an automotive relay.
-  - Water pump: via a fused automotive 30/40 A relay.
-  - Bilge pump: relay **in parallel with the float switch**, so the screen can only add a manual run. The automatic float circuit must never depend on the screen or the radio.
-  - Windlass: switch the coils of its existing up/down solenoid or contactor, never the motor (100 A+).
-- **Safety rules to build into both ends:**
-  1. Windlass is hold-to-run. The screen sends a keep-alive every 100 ms while a button is held; the relay box stops by itself after ~300 ms without one.
-  2. The relay box never energises UP and DOWN together (enforced on the box, not just the screen).
+## Utilities: the wireless relay box
+The screen controls lights, water pump, bilge pump and the anchor windlass through a separate wireless relay box.
+- **Link:** ESP-NOW between the screen and the box on channel 1, the same as the screen link. No router needed, a few ms latency, good range on a boat. Bluetooth and WiFi were considered and rejected (pairing hassle / needs a router). Packets are in `src/relaylink.h`.
+- **Board (bought 2026-10-26):** Waveshare ESP32-S3-POE-ETH-8DI-8DO, firmware `src/relaybox.cpp`, `pio run -e relaybox -t upload`. 7–36 V in, so it runs straight from 12 V.
+  - Its 8 outputs are **not relays**: optocoupled Darlington transistors that sink up to 500 mA, driven by a TCA9554 I/O expander at 0x20 (I2C SDA 42, SCL 41). They switch the coils of automotive relays. An output is on while its expander pin is LOW (`OUT_ACTIVE_LOW`; from the ESPHome config for this board, check on the bench).
+  - Inputs DI1–DI8 are GPIO 4–11, optocoupled, LOW = closed. They're read and sent to the screen but not used yet.
+  - RGB LED on GPIO 38: blue blinking = pairing, green = screen heard, red = screen lost, red blinking = output chip not answering.
+- **Outputs:** DO1 lights, DO2 water pump, DO3 bilge pump (manual run), DO4 windlass UP, DO5 windlass DOWN, DO6–DO8 spare.
+- **Wiring:** every load goes through an automotive relay (or the windlass's own contactor) whose coil the output switches.
+  - Lights and water pump: fused automotive 30/40 A relay.
+  - Bilge pump: relay contacts **in parallel with the float switch**, so the screen can only add a manual run. The automatic float circuit must never depend on the screen or the radio.
+  - Windlass: switch the coils of its existing up/down solenoid or contactor, never the motor (100 A+). Check the coil current is under 500 mA.
+- **Pairing:** a box with no screen broadcasts that it is pairing. A main or standalone screen with no box (or that can't hear its own) takes it, and the box keeps the first screen that joins. Hold BOOT on the box for 3 s to forget its screen and pair again. Remotes never talk to the box; they go through the main screen as before. The radio is now on for a standalone screen too, so it can find a box.
+- **Safety rules, enforced on the box whatever the screen sends:**
+  1. Windlass is hold-to-run. The screen sends what it wants every 100 ms while a button is held (250 ms otherwise); the box stops the windlass after 300 ms without one.
+  2. UP and DOWN are never on together, with a 250 ms pause between directions.
   3. The original windlass switches / foot switches stay fitted.
-  4. Relay box powers up with everything off, and turns everything except the bilge off if it loses contact with the screen.
+  4. The box powers up with everything off. After 10 s without the screen it turns everything but the bilge off (10 s, not 2, so a screen restart doesn't flash the lights; an update download still turns them off).
   5. Fuse every circuit; sealed enclosure.
-- **Screen side:** show a relay as on only after the box acknowledges it.
+- **Screen side:** a tile changes only when the box reports the output has switched. The utilities pill says RELAY BOX (green), NO RELAY BOX (red: taps do nothing and the windlass won't start) or DEMO RELAYS (no box paired, simulated as before). On (re)contact the screen takes over whatever the box is doing, so a screen restart doesn't switch anything. The chain counter is still simulated.
+- **Not tried on the hardware yet** (written 2026-10-26).
 
 ## Next steps
 1. Fix the probe wiring with the user, then confirm "Probe OK" on the screen.
@@ -156,6 +161,6 @@ The screen will also control lights, water pump, bilge pump and the anchor windl
 4. Show heater error codes on the screen.
 5. Bench test with the heater, with the original panel kept as a fallback.
 6. Try the phone app on both boards (see the checklist under "Phone app").
-7. Once the user picks a relay board: write its ESP-NOW firmware and replace the `RELAY LINK` stubs with real commands, keep-alive and acknowledgements.
+7. Bench test the relay box: flash it, pair, check each tile lights the right DO LED and that the windlass stops when the finger lifts or the screen is switched off. Then decide what the 8 inputs are for (e.g. float switch sense, chain counter).
 
 **Safety:** never cut power to stop the heater, because it must run its cool-down purge. Fit a CO alarm in any heated space.
