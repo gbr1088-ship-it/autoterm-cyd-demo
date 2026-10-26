@@ -132,8 +132,8 @@ The README covers how to build and use the project. This file covers **where thi
 ## Utilities: the wireless relay box
 The screen controls lights, water pump, bilge pump and the anchor windlass through a separate wireless relay box.
 - **Link:** ESP-NOW between the screen and the box on channel 1, the same as the screen link. No router needed, a few ms latency, good range on a boat. Bluetooth and WiFi were considered and rejected (pairing hassle / needs a router). Packets are in `src/relaylink.h`.
-- **Board (bought 2026-10-26):** Waveshare ESP32-S3-POE-ETH-8DI-8DO, firmware `src/relaybox.cpp`, `pio run -e relaybox -t upload`. 7–36 V in, so it runs straight from 12 V.
-  - Its 8 outputs are **not relays**: optocoupled Darlington transistors that sink up to 500 mA, driven by a TCA9554 I/O expander at 0x20 (I2C SDA 42, SCL 41). They switch the coils of automotive relays. An output is on while its expander pin is LOW (`OUT_ACTIVE_LOW`; from the ESPHome config for this board, check on the bench).
+- **Board (bought 2026-10-26, flashes on Owen's laptop as COM8):** Waveshare ESP32-S3-POE-ETH-8DI-8DO, firmware `src/relaybox.cpp`, `pio run -e relaybox -t upload`. 7–36 V in, so it runs straight from 12 V.
+  - Its 8 outputs are **not relays**: optocoupled Darlington transistors that sink up to 500 mA, driven by a TCA9554 I/O expander at 0x20 (I2C SDA 42, SCL 41). They switch the coils of automotive relays. An output is on while its expander pin is LOW (`OUT_ACTIVE_LOW`, confirmed on the bench).
   - Inputs DI1–DI8 are GPIO 4–11, optocoupled, LOW = closed. They're read and sent to the screen but not used yet.
   - RGB LED on GPIO 38: blue blinking = pairing, green = screen heard, red = screen lost, red blinking = output chip not answering.
 - **Outputs:** DO1 lights, DO2 water pump, DO3 bilge pump (manual run), DO4 windlass UP, DO5 windlass DOWN, DO6–DO8 spare.
@@ -149,7 +149,8 @@ The screen controls lights, water pump, bilge pump and the anchor windlass throu
   4. The box powers up with everything off. After 10 s without the screen it turns everything but the bilge off (10 s, not 2, so a screen restart doesn't flash the lights; an update download still turns them off).
   5. Fuse every circuit; sealed enclosure.
 - **Screen side:** a tile changes only when the box reports the output has switched. The utilities pill says RELAY BOX (green), NO RELAY BOX (red: taps do nothing and the windlass won't start) or DEMO RELAYS (no box paired, simulated as before). On (re)contact the screen takes over whatever the box is doing, so a screen restart doesn't switch anything. The chain counter is still simulated.
-- **Not tried on the hardware yet** (written 2026-10-26).
+- **Bench tested 2026-10-26** with the small CYD: pairing, DO1–DO3 follow the tiles, windlass DO4/DO5 only while held, and after unplugging the screen DO1/DO2 go off while DO3 stays. So `OUT_ACTIVE_LOW = true` is right. Not yet tried: the 7 inch with the box, a remote screen alongside, real loads, the inputs.
+- The box's boot log is hard to catch: it prints before Windows re-opens its USB port.
 
 ## Next steps
 1. Fix the probe wiring with the user, then confirm "Probe OK" on the screen.
@@ -161,6 +162,6 @@ The screen controls lights, water pump, bilge pump and the anchor windlass throu
 4. Show heater error codes on the screen.
 5. Bench test with the heater, with the original panel kept as a fallback.
 6. Try the phone app on both boards (see the checklist under "Phone app").
-7. Bench test the relay box: flash it, pair, check each tile lights the right DO LED and that the windlass stops when the finger lifts or the screen is switched off. Then decide what the 8 inputs are for (e.g. float switch sense, chain counter).
+7. Relay box: try it with the 7 inch, then wire real loads through automotive relays. Decide what the 8 inputs are for (e.g. float switch sense, chain counter).
 
 **Safety:** never cut power to stop the heater, because it must run its cool-down purge. Fit a CO alarm in any heated space.
