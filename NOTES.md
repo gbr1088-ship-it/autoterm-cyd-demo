@@ -149,7 +149,7 @@ The screen controls lights, water pump, bilge pump and the anchor windlass throu
   4. The box powers up with everything off. After 10 s without the screen it turns everything but the bilge off (10 s, not 2, so a screen restart doesn't flash the lights; an update download still turns them off).
   5. Fuse every circuit; sealed enclosure.
 - **Screen side:** a tile changes only when the box reports the output has switched. The utilities pill says RELAY BOX (green), NO RELAY BOX (red: taps do nothing and the windlass won't start) or DEMO RELAYS (no box paired, simulated as before). On (re)contact the screen takes over whatever the box is doing, so a screen restart doesn't switch anything. The chain counter is still simulated.
-- **Bench tested 2026-10-26** with the small CYD: pairing, DO1–DO3 follow the tiles, windlass DO4/DO5 only while held, and after unplugging the screen DO1/DO2 go off while DO3 stays. So `OUT_ACTIVE_LOW = true` is right. Not yet tried: the 7 inch with the box, a remote screen alongside, real loads, the inputs.
+- **Bench tested 2026-10-26** with the small CYD: pairing, DO1–DO3 follow the tiles, windlass DO4/DO5 only while held, and after unplugging the screen DO1/DO2 go off while DO3 stays. So `OUT_ACTIVE_LOW = true` is right. The 7 inch was then paired instead (BOOT held on the box) and switched DO1–DO5 the same way. Not yet tried: a remote screen alongside, real loads, the inputs.
 - The box's boot log is hard to catch: it prints before Windows re-opens its USB port.
 
 ## Next steps
@@ -162,6 +162,6 @@ The screen controls lights, water pump, bilge pump and the anchor windlass throu
 4. Show heater error codes on the screen.
 5. Bench test with the heater, with the original panel kept as a fallback.
 6. Try the phone app on both boards (see the checklist under "Phone app").
-7. Relay box: try it with the 7 inch, then wire real loads through automotive relays. Decide what the 8 inputs are for (e.g. float switch sense, chain counter).
+7. Relay box: wire real loads through automotive relays. Decide what the 8 inputs are for (e.g. float switch sense, chain counter).
 
 **Safety:** never cut power to stop the heater, because it must run its cool-down purge. Fit a CO alarm in any heated space.
