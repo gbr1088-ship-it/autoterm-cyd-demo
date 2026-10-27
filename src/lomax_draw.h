@@ -21,6 +21,13 @@
 #define HAVE_LOMAX_LOGO 1
 #endif
 
+// the screen: the CYD's 320 x 240, or the round 240 x 240 board's
+#if defined(BOARD_ROUND)
+const int SCR_W = 240, SCR_H = 240;
+#else
+const int SCR_W = 320, SCR_H = 240;
+#endif
+
 constexpr uint16_t rgb(uint8_t r, uint8_t g, uint8_t b) {
   return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
 }
@@ -65,6 +72,7 @@ struct DashState {
   float odo = 0, trip = 0;  // miles
 };
 
+enum LampKind : uint8_t { LAMP_LEFT, LAMP_RIGHT, LAMP_BEAM, LAMP_SIDE, LAMP_GPS, LAMP_COUNT };
 enum Page : uint8_t { PAGE_DUAL, PAGE_SPEEDO, PAGE_TACHO, PAGE_CLOCK, PAGE_COUNT };
 enum DialKind : uint8_t { DIAL_SPEEDO, DIAL_TACHO, DIAL_CLOCK };
 
@@ -79,6 +87,7 @@ struct Dial {
   float drawnDeg;       // the needle's angle on screen
   int shownSec;         // clock: the second on screen
   float odoShown, tripShown;
+  int8_t lampOn[LAMP_COUNT];  // lamps drawn in the face (round screen): what's showing
   // geometry, in face coordinates
   float c, R, bezel, Rf;  // centre, outer radius, bezel width, face radius
 };
@@ -171,8 +180,13 @@ void drawDrums(Dial &d, float cx, float cy, float miles, int whole, bool big) {
 }
 
 // ================================================================ needle dials
+#if defined(BOARD_ROUND)  // higher, to leave the bottom for the lamps
+float odoY(const Dial &d) { return d.c + d.Rf * 0.24f; }
+float tripY(const Dial &d) { return d.c + d.Rf * 0.44f; }
+#else
 float odoY(const Dial &d) { return d.c + d.Rf * (d.big ? 0.40f : 0.42f); }
 float tripY(const Dial &d) { return d.c + d.Rf * 0.62f; }
+#endif
 
 void drawScale(Dial &d) {
   bool speedo = d.kind == DIAL_SPEEDO;
@@ -209,6 +223,9 @@ void drawScale(Dial &d) {
       for (int k = 0; k <= kmax; k += 10) {
         float a = sweepAngle(k / 1.609f, vmax);
         tick(d, a, ri + 2.5f, ri + (k % 20 ? 5.5f : 8), k % 20 ? 0.45f : 0.7f, C_RED);
+#if defined(BOARD_ROUND)
+        if (k == 0) continue;  // its 0 would sit on the odometer
+#endif
         if (k % 20 == 0 && k <= 140) {
           char s[4];
           snprintf(s, sizeof s, "%d", k);
@@ -249,7 +266,9 @@ bool updateSpeedoInfo(Dial &d, const DashState &st, bool force) {
   }
   if (d.big && (force || trip != d.tripShown)) {
     drawDrums(d, d.c, tripY(d), st.trip, 3, true);
+#if !defined(BOARD_ROUND)  // no room beside it on the round dial: the trip is the short one
     text(d, "TRIP", d.c - d.Rf * 0.27f, tripY(d), LX_11, C_INK, MR_DATUM);
+#endif
     d.tripShown = trip;
     changed = true;
   }
@@ -444,7 +463,6 @@ void renderDial(Dial &d, const DashState &st) {
 // ================================================================ lamps
 // Tell-tales, drawn by sampling each pixel 4 x 4 times against the shape.
 const int LAMP_W = 34, LAMP_H = 26;
-enum LampKind : uint8_t { LAMP_LEFT, LAMP_RIGHT, LAMP_BEAM, LAMP_SIDE, LAMP_GPS, LAMP_COUNT };
 TFT_eSprite *lampSpr = nullptr;
 
 bool inLamp(LampKind k, float x, float y) {
@@ -481,6 +499,34 @@ bool inLamp(LampKind k, float x, float y) {
   }
 }
 
+// a lamp drawn into a dial's face (round screen), centred on (fx, fy) in
+// units of the face radius from its centre, at 0.72 of the full size
+const float FACE_LAMP_SCALE = 0.72f;
+
+void drawFaceLamp(Dial &d, LampKind k, bool on, float fx, float fy) {
+  const float sc = FACE_LAMP_SCALE;
+  int w = (int)ceilf(LAMP_W * sc), h = (int)ceilf(LAMP_H * sc);
+  int x0 = (int)roundf(d.c + fx * d.Rf - w / 2.0f), y0 = (int)roundf(d.c + fy * d.Rf - h / 2.0f);
+  // darker colours than on the black panel, to stand out on cream
+  uint16_t lit = k == LAMP_BEAM ? rgb(20, 80, 225) : k == LAMP_GPS ? rgb(215, 110, 0) : rgb(10, 165, 45);
+  if (k == LAMP_GPS) {
+    paintBase(d, x0, y0, w, h);
+    uint16_t col = on ? lit : shade(faceBase(d, x0 + w / 2, y0 + h / 2), 0.88f);
+    text(d, "GPS", x0 + w / 2.0f, y0 + h / 2.0f + 1, LX_11, col);
+    d.face->drawRoundRect(x0, y0 + 2, w, h - 4, 3, col);
+    return;
+  }
+  for (int y = 0; y < h; y++)
+    for (int x = 0; x < w; x++) {
+      int n = 0;
+      for (int sy = 0; sy < 4; sy++)
+        for (int sx = 0; sx < 4; sx++) n += inLamp(k, (x + (sx + 0.5f) / 4) / sc, (y + (sy + 0.5f) / 4) / sc);
+      uint16_t base = faceBase(d, x0 + x, y0 + y);
+      uint16_t col = on ? lit : shade(base, 0.88f);  // unlit: a faint shadow of the symbol
+      d.face->drawPixel(x0 + x, y0 + y, mix(base, col, n / 16.0f));
+    }
+}
+
 void drawLamp(LampKind k, bool on, int x, int y) {
   uint16_t col = !on ? C_LAMP_OFF : (k == LAMP_BEAM ? C_BLUE : k == LAMP_GPS ? C_AMBER : C_GREEN);
   if (k == LAMP_GPS) {  // lit while there's no fix, so the speedo can't be trusted
@@ -505,22 +551,46 @@ void drawLamp(LampKind k, bool on, int x, int y) {
 }
 
 // ================================================================ pages
-struct LampPos { int16_t x, y; };
+struct LampPos { int16_t x, y; };      // on the screen, top-left
+struct FaceLampPos { float x, y; };    // in the dial's face, see drawFaceLamp
 struct PageLayout {
-  uint8_t n;
+  uint8_t n;                           // dials; 0: no such page on this screen
   Dial dials[3];
-  LampPos lamp[LAMP_COUNT];  // left, right, beam, side, GPS
+  bool lampsInFace;                    // in dials[0]'s face, not around it
+  LampPos lamp[LAMP_COUNT];            // left, right, beam, side, GPS
+  FaceLampPos faceLamp[LAMP_COUNT];
 };
 
+#if defined(BOARD_ROUND)
+// one dial filling the round screen; the lamps in a row below the needle's
+// pivot, or around the clock's centre
+#define ROW_LAMPS {{-0.48f, 0.7f}, {0.48f, 0.7f}, {0.24f, 0.7f}, {-0.24f, 0.7f}, {0, 0.7f}}
+PageLayout layouts[PAGE_COUNT] = {
+    {0},
+    {1, {{DIAL_SPEEDO, 0, 0, 240, true}}, true, {}, ROW_LAMPS},
+    {1, {{DIAL_TACHO, 0, 0, 240, true}}, true, {}, ROW_LAMPS},
+    {1, {{DIAL_CLOCK, 0, 0, 240, true}}, true, {}, {{-0.42f, 0}, {0.42f, 0}, {0.3f, 0.4f}, {-0.3f, 0.4f}, {0, 0.4f}}},
+};
+#else
 // side by side: speedo and tacho, a small clock between them at the top
 // big pages: one 200 px dial, the lamps in the corners
 PageLayout layouts[PAGE_COUNT] = {
     {3, {{DIAL_SPEEDO, 2, 62, 156, false}, {DIAL_TACHO, 162, 62, 156, false}, {DIAL_CLOCK, 128, 2, 64, false}},
-     {{4, 4}, {282, 4}, {234, 4}, {52, 4}, {143, 211}}},
-    {1, {{DIAL_SPEEDO, 60, 20, 200, true}}, {{8, 8}, {278, 8}, {8, 206}, {278, 206}, {8, 107}}},
-    {1, {{DIAL_TACHO, 60, 20, 200, true}}, {{8, 8}, {278, 8}, {8, 206}, {278, 206}, {8, 107}}},
-    {1, {{DIAL_CLOCK, 60, 20, 200, true}}, {{8, 8}, {278, 8}, {8, 206}, {278, 206}, {8, 107}}},
+     false, {{4, 4}, {282, 4}, {234, 4}, {52, 4}, {143, 211}}},
+    {1, {{DIAL_SPEEDO, 60, 20, 200, true}}, false, {{8, 8}, {278, 8}, {8, 206}, {278, 206}, {8, 107}}},
+    {1, {{DIAL_TACHO, 60, 20, 200, true}}, false, {{8, 8}, {278, 8}, {8, 206}, {278, 206}, {8, 107}}},
+    {1, {{DIAL_CLOCK, 60, 20, 200, true}}, false, {{8, 8}, {278, 8}, {8, 206}, {278, 206}, {8, 107}}},
 };
+#endif
+
+// the page after p that this screen has
+Page nextPage(Page p) {
+  do p = (Page)((p + 1) % PAGE_COUNT);
+  while (layouts[p].n == 0);
+  return p;
+}
+
+bool hasPage(int p) { return p >= 0 && p < PAGE_COUNT && layouts[p].n > 0; }
 
 Page page = PAGE_DUAL;
 bool lampShown[LAMP_COUNT];
@@ -534,8 +604,32 @@ void freePage() {
   if (strip) { strip->deleteSprite(); delete strip; strip = nullptr; }
 }
 
+void lampStates(const DashState &st, bool *on) {
+  on[LAMP_LEFT] = st.indL;
+  on[LAMP_RIGHT] = st.indR;
+  on[LAMP_BEAM] = st.beam;
+  on[LAMP_SIDE] = st.side;
+  on[LAMP_GPS] = !st.gpsOk;  // lit while there's no fix, so the speedo can't be trusted
+}
+
+// lamps in a dial's face; true if any changed (the dial needs redrawing)
+bool updateFaceLamps(Dial &d, const DashState &st, bool force) {
+  if (!L().lampsInFace || &d != &L().dials[0]) return false;
+  bool on[LAMP_COUNT], changed = false;
+  lampStates(st, on);
+  for (int i = 0; i < LAMP_COUNT; i++)
+    if (force || on[i] != d.lampOn[i]) {
+      drawFaceLamp(d, (LampKind)i, on[i], L().faceLamp[i].x, L().faceLamp[i].y);
+      d.lampOn[i] = on[i];
+      changed = true;
+    }
+  return changed;
+}
+
 void drawLamps(const DashState &st, bool force) {
-  bool on[LAMP_COUNT] = {st.indL, st.indR, st.beam, st.side, !st.gpsOk};
+  if (L().lampsInFace) return;
+  bool on[LAMP_COUNT];
+  lampStates(st, on);
   for (int i = 0; i < LAMP_COUNT; i++)
     if (force || on[i] != lampShown[i]) {
       drawLamp((LampKind)i, on[i], L().lamp[i].x, L().lamp[i].y);
@@ -546,7 +640,7 @@ void drawLamps(const DashState &st, bool force) {
 void showPage(Page p, const DashState &st) {
   freePage();
   page = p;
-  screenFill(0, 0, 320, 240, C_DASH);
+  screenFill(0, 0, SCR_W, SCR_H, C_DASH);
   stripW = 0;
   for (int i = 0; i < L().n; i++) {
     Dial &d = L().dials[i];
@@ -555,6 +649,7 @@ void showPage(Page p, const DashState &st) {
     if (!d.face->createSprite(d.size, d.size)) Serial.printf("no memory for a %d px dial\n", d.size);
     buildFace(d);
     updateSpeedoInfo(d, st, true);
+    updateFaceLamps(d, st, true);
     if (d.size > stripW) stripW = d.size;
   }
   strip = new TFT_eSprite(&tft);
@@ -577,10 +672,12 @@ void updateDash(const DashState &st, float dt, bool snap = false) {
     if (!d.face || !d.face->created()) continue;
     if (d.kind == DIAL_CLOCK) {
       int sec = st.timeOk ? st.hh * 3600 + st.mm * 60 + st.ss : -2;
-      if (sec != d.shownSec) { d.shownSec = sec; renderDial(d, st); }
+      bool lamps = updateFaceLamps(d, st, false);
+      if (sec != d.shownSec || lamps) { d.shownSec = sec; renderDial(d, st); }
       continue;
     }
     bool info = updateSpeedoInfo(d, st, false);
+    info |= updateFaceLamps(d, st, false);
     float target = d.kind == DIAL_SPEEDO ? st.mph : st.rpm;
     float vmax = d.kind == DIAL_SPEEDO ? SPEEDO_MAX : TACHO_MAX * 1000;
     // the needle eases in: GPS speed comes once a second (or 5 times)
@@ -596,20 +693,24 @@ void updateDash(const DashState &st, float dt, bool snap = false) {
 
 // ================================================================ start-up
 // The logo: your own artwork if there is a src/lomax_logo.h, otherwise the
-// name in a chrome-edged oval badge.
+// name on a chrome-edged enamel badge (oval, or round on the round screen).
 void drawSplash() {
-  screenFill(0, 0, 320, 240, C_DASH);
+  screenFill(0, 0, SCR_W, SCR_H, C_DASH);
 #ifdef HAVE_LOMAX_LOGO
   TFT_eSprite s(&tft);
   s.setColorDepth(16);
   if (s.createSprite(LOMAX_LOGO_W, LOMAX_LOGO_H)) {
     s.setSwapBytes(true);  // the picture is plain RGB565; sprites keep theirs byte-swapped
     s.pushImage(0, 0, LOMAX_LOGO_W, LOMAX_LOGO_H, lomax_logo_bitmap);
-    screenPush(s, 0, 0, LOMAX_LOGO_W, LOMAX_LOGO_H, (320 - LOMAX_LOGO_W) / 2, (240 - LOMAX_LOGO_H) / 2);
+    screenPush(s, 0, 0, LOMAX_LOGO_W, LOMAX_LOGO_H, (SCR_W - LOMAX_LOGO_W) / 2, (SCR_H - LOMAX_LOGO_H) / 2);
     s.deleteSprite();
   }
 #else
-  const int W = 280, H = 120;
+#if defined(BOARD_ROUND)
+  const int W = 236, H = 236;  // a round badge
+#else
+  const int W = 280, H = 120;  // an oval one
+#endif
   TFT_eSprite s(&tft);
   s.setColorDepth(16);
   if (!s.createSprite(W, H)) return;
@@ -636,7 +737,7 @@ void drawSplash() {
   s.setTextColor(rgb(245, 236, 210), rgb(110, 22, 18));
   s.drawString("LOMAX", W / 2, H / 2 + 3);
   s.unloadFont();
-  screenPush(s, 0, 0, W, H, (320 - W) / 2, (240 - H) / 2);
+  screenPush(s, 0, 0, W, H, (SCR_W - W) / 2, (SCR_H - H) / 2);
   s.deleteSprite();
 #endif
 }

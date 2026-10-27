@@ -24,7 +24,8 @@ setting doesn't dim it. The DS18B20 probe goes on **IO6** (the Sensor header).
 ### Lomax dashboard
 The same CYD board can also be a car dashboard: a GPS speedo, a rev counter
 from the coil, warning lamps and an old style clock. It's a separate firmware,
-`pio run -e lomax -t upload`. See [LOMAX.md](LOMAX.md).
+`pio run -e lomax -t upload`. It also runs on Waveshare's round 1.28" ESP32-S3
+screen (`-e lomax_round`). See [LOMAX.md](LOMAX.md).
 
 ## Screens
 - **Splash**: the Adventure Van Life logo fades in, followed by a loading bar.

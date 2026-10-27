@@ -3,6 +3,18 @@
 #pragma once
 
 // ---------------------------------------------------------------- pins
+#if defined(BOARD_ROUND)
+// Waveshare ESP32-S3-Touch-LCD-1.28-B: the six GPIOs on its SH1.0 connector.
+// CHECK these against the pin labels in Waveshare's wiki (pinout picture)
+// before wiring: any of the six can take any of these jobs.
+#define GPS_RX_PIN   18  // the GPS module's TX
+#define TACHO_PIN    17  // optocoupler output from the coil's negative
+#define IND_L_PIN    16  // left indicator lamp (or the only one)
+#define IND_R_PIN    15  // right indicator. -1 if there is one lamp
+#define BEAM_PIN     21  // main beam
+#define SIDE_PIN     33  // sidelights
+#define SCREEN_ROTATION 0  // 0-3: turns the picture in 90 degree steps
+#else
 // The CYD has three free pins on its connectors (IO35 on P3, IO22 and IO27
 // on CN1). The other three lamp inputs use the SD card slot's pins through
 // a micro SD "sniffer" breakout plugged into the slot (no SD card is used).
@@ -12,6 +24,8 @@
 #define IND_R_PIN    18  // SD slot: right indicator. -1 if there is one lamp
 #define BEAM_PIN     19  // SD slot: main beam
 #define SIDE_PIN     23  // SD slot: sidelights
+#define SCREEN_ROTATION 1  // landscape, USB on the right; 3 to flip it
+#endif
 
 // The lamp inputs read LOW when the lamp is lit, which is what an
 // optocoupler pulling the pin to ground gives. Set to 0 for active-high.
@@ -41,7 +55,7 @@
 
 // ---------------------------------------------------------------- dials
 #define SPEEDO_MAX 90         // mph at full scale (multiple of 10)
-#define SPEEDO_KMH_SCALE 1    // 1: inner km/h scale on the big speedo
+#define SPEEDO_KMH_SCALE 1    // 1: inner km/h scale on the big (and round) speedo
 #define TACHO_MAX 7           // x1000 rpm at full scale
 #define TACHO_RED_FROM 5.5f   // x1000 rpm where the red band starts
 
@@ -52,7 +66,7 @@
 #define SPLASH_MS    2500     // start-up logo
 #define SHOW_LAMP_CHECK 1     // 1: all lamps and a needle sweep after the logo
 
-// Touch calibration (as the heater firmware; see README "Troubleshooting")
+// CYD touch calibration (as the heater firmware; see README "Troubleshooting")
 #define TOUCH_X_MIN 200
 #define TOUCH_X_MAX 3700
 #define TOUCH_Y_MIN 240

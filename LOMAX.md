@@ -1,12 +1,16 @@
-# Lomax dashboard (ESP32-2432S028 "Cheap Yellow Display")
+# Lomax dashboard
 
 A dash-mounted speedometer, rev counter and clock for a Lomax on a 2CV
-engine and chassis. It uses the same 2.8" CYD board as the heater firmware
-and is a separate firmware (`src/lomax.cpp`).
+engine and chassis. It's a separate firmware (`src/lomax.cpp`) that runs on
+either of two boards:
 
-```
-pio run -e lomax -t upload
-```
+- the 2.8" **ESP32-2432S028** ("Cheap Yellow Display"), the heater firmware's board:
+  `pio run -e lomax -t upload`
+- the round 1.28" **Waveshare ESP32-S3-Touch-LCD-1.28-B**, one dial at a time:
+  `pio run -e lomax_round -t upload`
+  (see [Round screen](#round-screen-waveshare-esp32-s3-touch-lcd-128-b))
+
+### On the CYD
 
 | Side by side | Speedo |
 |---|---|
@@ -15,6 +19,13 @@ pio run -e lomax -t upload
 | ![](assets/lomax_tacho.png) | ![](assets/lomax_clock.png) |
 | **Start-up** | **No GPS fix yet** |
 | ![](assets/lomax_splash.png) | ![](assets/lomax_nogps.png) |
+
+### On the round screen
+| Speedo | Rev counter | Clock |
+|---|---|---|
+| ![](assets/lomax_round_speedo.png) | ![](assets/lomax_round_tacho.png) | ![](assets/lomax_round_clock.png) |
+| **Start-up** | **No GPS fix yet** | |
+| ![](assets/lomax_round_splash.png) | ![](assets/lomax_round_nogps.png) | |
 
 ## What it shows
 - **Speed** from a GPS module, in mph. The big speedo also has an inner km/h scale.
@@ -34,22 +45,23 @@ pio run -e lomax -t upload
 - **Night**: with the sidelights on, the backlight dims (`BRIGHT_NIGHT`).
 
 **Tap** the screen for the next page: side by side → speedo → rev counter →
-clock. It remembers the page. **Hold 2 s** to zero the trip.
+clock (the round screen has no side-by-side page). It remembers the page.
+**Hold 2 s** to zero the trip.
 
 Over USB (115200 baud), `odo 12873.4` sets the odometer to the car's own
 reading, and `trip 0` zeroes the trip.
 
 ## Parts
-- ESP32-2432S028 (CYD) 2.8" board
+- ESP32-2432S028 (CYD) 2.8" board, or the round Waveshare ESP32-S3-Touch-LCD-1.28-B
 - GPS module: u-blox NEO-6M (GY-NEO6MV2) or NEO-M8N, with its antenna
 - PC817 optocouplers: one for the coil, plus one per lamp (or a 4-channel
   "PC817 optocoupler module" for the lamps)
-- Micro SD "sniffer" / extender breakout that plugs into the CYD's SD slot.
-  Three lamp inputs come out through it.
+- CYD only: a micro SD "sniffer" / extender breakout that plugs into its SD
+  slot. Three lamp inputs come out through it.
 - A 12 V → 5 V buck converter rated for car use (1 A or more) and an inline fuse
 - Resistors and diodes as in the diagrams below
 
-## Pins
+## Pins (CYD)
 The CYD has only three free pins on its connectors. The SD slot gives three
 more, because no SD card is used. Everything is set in `src/lomax_config.h`.
 
@@ -170,11 +182,48 @@ When `src/lomax_logo.h` exists, it's used. Delete it to go back to the badge.
 | `BRIGHT_DAY`, `BRIGHT_NIGHT` | 255, 70 | backlight; night is with the sidelights on |
 | `LAMPS_ACTIVE_LOW` | 1 | 0 if your inputs go high when lit |
 
+## Round screen (Waveshare ESP32-S3-Touch-LCD-1.28-B)
+A 1.28" round IPS screen (GC9A01, 240 × 240) with CST816S touch, in a CNC
+metal case about 40 mm across, so it suits a 52 mm gauge pod. It shows one
+dial at a time, and the lamps sit inside the dial: a row under the needle's
+pivot, or around the clock's centre. Unlit lamps are faint shadows on the
+face; lit ones show in colour. On the speedo the upper drum counter is the
+odometer and the shorter one below it is the trip.
+
+**Pins.** The board brings out six GPIOs on its SH1.0 connector (a cable
+comes with it), plus VSYS (5 V in) and GND. That's exactly enough:
+
+| Signal | Default pin |
+|---|---|
+| GPS TX → | GPIO18 |
+| Tacho (coil) | GPIO17 |
+| Left indicator | GPIO16 |
+| Right indicator | GPIO15 |
+| Main beam | GPIO21 |
+| Sidelights | GPIO33 |
+
+**Check these against the pin labels in Waveshare's wiki before wiring.** I
+couldn't confirm that connector's pin numbers from Waveshare's pages. Any of
+the six can do any of these jobs, so change them in `src/lomax_config.h`
+(the `BOARD_ROUND` block) to match. The display and touch pins in
+`platformio.ini` come from Waveshare's demo code for this board family
+(LCD: SCLK 10, MOSI 11, CS 9, DC 8, RST 14, backlight 2; touch I2C: SDA 6,
+SCL 7, reset 13).
+
+The input circuits are the same as for the CYD below: optocouplers for the
+lamps and the coil, with the pull-up for the coil going to the board's
+3.3 V. Power it with 5 V on **VSYS** from the buck converter (or its USB-C
+socket). It also has a battery connector, but leave that empty in a car.
+
+If the picture turns out sideways, change `SCREEN_ROTATION`. If it's
+garbled, lower `SPI_FREQUENCY` in `platformio.ini` to 40000000.
+
 ## Things to know
 - **Sunlight.** The CYD's screen is a small TN LCD, and it washes out in
   direct sun. That matters in an open car. A hood over it helps a lot. Some
   CYD versions (two USB sockets, ST7789) have a brighter IPS panel; see the
-  README's troubleshooting table for the driver setting.
+  README's troubleshooting table for the driver setting. The round board's
+  IPS screen holds up better, but a gauge pod's hood still helps.
 - **No signal, no speed.** In tunnels and multi-storey car parks the speedo
   drops to 0 and the GPS lamp lights. If this replaces the car's only
   speedometer, check it meets the MOT / IVA rules for your car.
@@ -186,7 +235,7 @@ so you can try out colours and layouts without the board (Linux or macOS,
 needs g++ and Python with Pillow):
 ```
 pio run -e lomax                 # once, to download TFT_eSPI
-sh tools/lomax_preview/build.sh  # pictures in tools/lomax_preview/out
+sh tools/lomax_preview/build.sh  # pictures in tools/lomax_preview/out (round_*: the round screen)
 ```
 The fonts are Liberation Serif Bold (SIL Open Font License), made by
 `python tools/lomax_fonts.py`.

@@ -1,15 +1,21 @@
-// Lomax dashboard for the ESP32-2432S028 ("Cheap Yellow Display").
+// Lomax dashboard for the ESP32-2432S028 ("Cheap Yellow Display"), or the
+// round Waveshare ESP32-S3-Touch-LCD-1.28-B (BOARD_ROUND).
 //
 // Speed from a GPS module, engine speed from the ignition coil's pulses, the
 // indicator, main beam and sidelight lamps, an odometer and trip, and an old
 // style clock set from the GPS. Tap the screen for the next page; hold it to
 // zero the trip. Pins and calibration are in lomax_config.h, wiring in LOMAX.md.
 //
-//   pio run -e lomax -t upload
+//   pio run -e lomax -t upload           (CYD)
+//   pio run -e lomax_round -t upload     (round)
 #include <Arduino.h>
 #include <Preferences.h>
 #include <TFT_eSPI.h>
+#if defined(BOARD_ROUND)
+#include <Wire.h>
+#else
 #include <XPT2046_Touchscreen.h>
+#endif
 #include <sys/time.h>
 #include <time.h>
 #include "lomax_config.h"
@@ -21,6 +27,13 @@ void screenFill(int x, int y, int w, int h, uint16_t colour) { tft.fillRect(x, y
 
 #include "lomax_draw.h"
 
+#if defined(BOARD_ROUND)
+// CST816S touch controller on the board's I2C bus (shared with the IMU)
+#define TOUCH_SDA 6
+#define TOUCH_SCL 7
+#define TOUCH_RST 13
+#define CST816_ADDR 0x15
+#else
 // touch controller on its own pins (VSPI), as on every CYD
 #define XPT2046_IRQ  36
 #define XPT2046_MOSI 32
@@ -29,6 +42,7 @@ void screenFill(int x, int y, int w, int h, uint16_t colour) { tft.fillRect(x, y
 #define XPT2046_CS   33
 SPIClass touchSpi(VSPI);
 XPT2046_Touchscreen ts(XPT2046_CS, XPT2046_IRQ);
+#endif
 
 #define BL_CHANNEL 0
 HardwareSerial gpsSerial(2);
@@ -236,6 +250,40 @@ void updateClock() {
 }
 
 // ================================================================ touch
+#if defined(BOARD_ROUND)
+void beginTouch() {
+  pinMode(TOUCH_RST, OUTPUT);
+  digitalWrite(TOUCH_RST, LOW);
+  delay(10);
+  digitalWrite(TOUCH_RST, HIGH);
+  delay(50);
+  Wire.begin(TOUCH_SDA, TOUCH_SCL, 400000);
+  Wire.beginTransmission(CST816_ADDR);  // keep it awake: asleep, it doesn't answer
+  Wire.write(0xFE);
+  Wire.write(0x01);
+  Wire.endTransmission();
+}
+
+// Only "is a finger down" matters here; the position is read but unused.
+bool touched(int &x, int &y) {
+  Wire.beginTransmission(CST816_ADDR);
+  Wire.write(0x02);  // number of fingers, then X and Y
+  if (Wire.endTransmission(false) != 0) return false;
+  if (Wire.requestFrom(CST816_ADDR, 5) != 5) return false;
+  uint8_t b[5];
+  for (auto &v : b) v = Wire.read();
+  if (!(b[0] & 0x0F)) return false;
+  x = ((b[1] & 0x0F) << 8) | b[2];
+  y = ((b[3] & 0x0F) << 8) | b[4];
+  return true;
+}
+#else
+void beginTouch() {
+  touchSpi.begin(XPT2046_CLK, XPT2046_MISO, XPT2046_MOSI, XPT2046_CS);
+  ts.begin(touchSpi);
+  ts.setRotation(SCREEN_ROTATION);
+}
+
 bool touched(int &x, int &y) {
   if (!ts.tirqTouched() || !ts.touched()) return false;
   TS_Point p = ts.getPoint();
@@ -244,6 +292,7 @@ bool touched(int &x, int &y) {
   y = constrain(map(p.y, TOUCH_Y_MIN, TOUCH_Y_MAX, 0, 240), 0, 239);
   return true;
 }
+#endif
 
 uint32_t pressStart = 0, lastTouchMs = 0;
 bool pressHandled = false;
@@ -262,7 +311,7 @@ void handleTouch() {
   }
   if (!down && pressStart) {
     if (!pressHandled) {
-      Page next = (Page)((page + 1) % PAGE_COUNT);
+      Page next = nextPage(page);
       showPage(next, st);
       updateDash(st, 0, true);
       prefs.putUChar("page", next);
@@ -317,14 +366,12 @@ void setup() {
   st.trip = prefs.getFloat("trip", 0);
 
   tft.init();  // switches the backlight on, so the dimmer takes the pin after it
-  tft.setRotation(1);  // landscape, USB on the right; use 3 to flip (and below)
+  tft.setRotation(SCREEN_ROTATION);
   tft.fillScreen(C_DASH);
   ledcSetup(BL_CHANNEL, 5000, 8);
   ledcAttachPin(TFT_BL, BL_CHANNEL);
   backlight(0);
-  touchSpi.begin(XPT2046_CLK, XPT2046_MISO, XPT2046_MOSI, XPT2046_CS);
-  ts.begin(touchSpi);
-  ts.setRotation(1);
+  beginTouch();
 
   // the logo fades in
   drawSplash();
@@ -344,8 +391,8 @@ void setup() {
   uint32_t t0 = millis();
   while (millis() - t0 < SPLASH_MS) readGps();
 
-  uint8_t p = prefs.getUChar("page", PAGE_DUAL);
-  showPage(p < PAGE_COUNT ? (Page)p : PAGE_DUAL, st);
+  uint8_t p = prefs.getUChar("page", 255);
+  showPage(hasPage(p) ? (Page)p : nextPage((Page)(PAGE_COUNT - 1)), st);
   Serial.printf("heap free %u, largest block %u\n", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 #if SHOW_LAMP_CHECK
   lampCheck();

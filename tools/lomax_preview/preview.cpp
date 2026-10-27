@@ -6,7 +6,7 @@ HardwareSerial Serial;
 SPIClass SPI;
 TFT_eSPI tft;
 
-static uint16_t fb[240][320];
+static uint16_t fb[240][320];  // the top-left SCR_W x SCR_H of it is the screen
 
 void screenPush(TFT_eSprite &s, int sx, int sy, int w, int h, int x, int y) {
   const uint16_t *p = (const uint16_t *)s.getPointer();
@@ -25,16 +25,25 @@ void screenFill(int x, int y, int w, int h, uint16_t col) {
 
 #include "lomax_draw.h"
 
+#if defined(BOARD_ROUND)
+#define PREFIX "round_"
+#else
+#define PREFIX ""
+#endif
+
+// name_<w>x<h>.rgb565, which build.sh turns into a PNG
 static void save(const char *name) {
-  FILE *f = fopen(name, "wb");
-  fwrite(fb, sizeof fb, 1, f);
+  char fn[64];
+  snprintf(fn, sizeof fn, PREFIX "%s_%dx%d.rgb565", name, SCR_W, SCR_H);
+  FILE *f = fopen(fn, "wb");
+  for (int y = 0; y < SCR_H; y++) fwrite(fb[y], 2, SCR_W, f);
   fclose(f);
-  fprintf(stderr, "wrote %s\n", name);
+  fprintf(stderr, "wrote %s\n", fn);
 }
 
 int main() {
   drawSplash();
-  save("splash.rgb565");
+  save("splash");
 
   DashState st;
   st.mph = 48;
@@ -49,10 +58,11 @@ int main() {
   st.odo = 12873.4f;
   st.trip = 86.7f;
   for (int p = 0; p < PAGE_COUNT; p++) {
+    if (!hasPage(p)) continue;
     showPage((Page)p, st);
     updateDash(st, 0, true);
     char n[32];
-    snprintf(n, sizeof n, "page%d.rgb565", p);
+    snprintf(n, sizeof n, "page%d", p);
     save(n);
   }
   // no GPS yet: needle at rest, warning on, clock stopped at ten past ten
@@ -60,8 +70,8 @@ int main() {
   cold.beam = true;
   cold.indR = true;
   cold.odo = 12873.4f;
-  showPage(PAGE_DUAL, cold);
+  showPage(nextPage((Page)(PAGE_COUNT - 1)), cold);
   updateDash(cold, 0, true);
-  save("nogps.rgb565");
+  save("nogps");
   return 0;
 }
