@@ -1,7 +1,8 @@
 // 7 inch ESP32-S3 board: Waveshare ESP32-S3-Touch-LCD-7 (800x480 RGB panel,
 // GT911 touch, CH422G IO expander for the resets and the backlight).
 //
-// The screen is mounted upright (portrait, 480x800). Here `tft` is a 480x800
+// The screen is mounted upright (portrait, 480x800; the Lomax dashboard uses
+// it landscape, 800x480, see P7_PORTRAIT). Here `tft` is a full-screen
 // sprite in PSRAM instead of a real display, so every TFT_eSPI drawing call
 // in main.cpp works unchanged; main.cpp lays the pages out for it (see SCR_W,
 // U() and ui7.h). A background task copies whatever changed onto the 800x480
@@ -55,14 +56,21 @@ const int P7_DATA[16] = {14, 38, 18, 17, 10,  39, 0, 45, 48, 47, 21,  1, 2, 42, 
 #define P7_BOUNCE_LINES 10
 #endif
 
-const int P7_W = 800, P7_H = 480;   // the panel
-const int UI_W = 480, UI_H = 800;   // what main.cpp draws
-
 // Which way the board is turned: 1 = a quarter turn clockwise from landscape
 // (the panel's left edge at the top, USB sockets at the top), 2 =
 // anticlockwise (USB sockets at the bottom, as mounted in the van).
+// 0 = landscape as the panel is made, 3 = landscape upside down (the Lomax
+// dashboard uses these).
 #ifndef P7_PORTRAIT
 #define P7_PORTRAIT 2
+#endif
+#define P7_LANDSCAPE (P7_PORTRAIT == 0 || P7_PORTRAIT == 3)
+
+const int P7_W = 800, P7_H = 480;   // the panel
+#if P7_LANDSCAPE
+const int UI_W = 800, UI_H = 480;   // what the firmware draws
+#else
+const int UI_W = 480, UI_H = 800;
 #endif
 
 // Colour correction on the way to the panel: each channel goes through
@@ -74,13 +82,15 @@ const int UI_W = 480, UI_H = 800;   // what main.cpp draws
 #endif
 uint8_t gammaR[32], gammaG[64], gammaB[32];
 
-void makeGammaLuts() {
+// level < 1 also darkens everything, the only way to dim this screen (its
+// backlight is on or off)
+void makeGammaLuts(float level = 1) {
   for (int i = 0; i < 64; i++) {
     if (i < 32) {
-      gammaR[i] = lroundf(powf(i / 31.0f, P7_GAMMA) * 31);
+      gammaR[i] = lroundf(powf(i / 31.0f, P7_GAMMA) * 31 * level);
       gammaB[i] = gammaR[i];
     }
-    gammaG[i] = lroundf(powf(i / 63.0f, P7_GAMMA) * 63);
+    gammaG[i] = lroundf(powf(i / 63.0f, P7_GAMMA) * 63 * level);
   }
 }
 
@@ -136,12 +146,39 @@ class ScreenSprite : public TFT_eSprite {
   // columns at a time, each becoming a panel row.
   //   P7_PORTRAIT 1: panel x = screen y,           panel y = 479 - screen x
   //   P7_PORTRAIT 2: panel x = 799 - screen y,     panel y = screen x
+  // Landscape: a few rows at a time, as they are (0) or turned round (3).
   void flush(esp_lcd_panel_handle_t panel) {
     portENTER_CRITICAL(&lock);
     int32_t x0 = dx0, y0 = dy0, x1 = dx1, y1 = dy1;
     dx0 = 1; dx1 = 0;  // empty
     portEXIT_CRITICAL(&lock);
     if (x0 > x1 || !created()) return;
+
+#if P7_LANDSCAPE
+    {
+    int w = x1 - x0 + 1;
+    const uint16_t *im = (const uint16_t *)getPointer();
+    for (int a = y0; a <= y1; a += ROWS) {
+      int b = min(a + ROWS - 1, (int)y1);
+      for (int y = a; y <= b; y++) {
+        const uint16_t *src = im + y * UI_W;
+        for (int x = x0; x <= x1; x++) {
+#if P7_PORTRAIT == 0
+          buf[(y - a) * w + (x - x0)] = panelColour(src[x]);
+#else
+          buf[(b - y) * w + (x1 - x)] = panelColour(src[x]);
+#endif
+        }
+      }
+#if P7_PORTRAIT == 0
+      esp_lcd_panel_draw_bitmap(panel, x0, a, x1 + 1, b + 1, buf);
+#else
+      esp_lcd_panel_draw_bitmap(panel, P7_W - 1 - x1, P7_H - 1 - b, P7_W - x0, P7_H - a, buf);
+#endif
+    }
+    }
+    return;
+#endif
 
     int w = y1 - y0 + 1;  // panel row length
     const uint16_t *img = (const uint16_t *)getPointer();
@@ -264,7 +301,13 @@ bool touch7Read(int &x, int &y) {
       uint8_t p[6];  // x, y, contact area
       if ((st & 0x0F) > 0 && gtRead(0x8150, p, 6) && (p[4] | (p[5] << 8)) > 0) {
         int px = constrain(p[0] | (p[1] << 8), 0, P7_W - 1), py = constrain(p[2] | (p[3] << 8), 0, P7_H - 1);
-#if P7_PORTRAIT == 1
+#if P7_PORTRAIT == 0
+        lx = px;
+        ly = py;
+#elif P7_PORTRAIT == 3
+        lx = P7_W - 1 - px;
+        ly = P7_H - 1 - py;
+#elif P7_PORTRAIT == 1
         lx = P7_H - 1 - py;
         ly = px;
 #else

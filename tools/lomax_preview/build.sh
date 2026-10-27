@@ -11,8 +11,8 @@ OUT=$HERE/out
 mkdir -p "$OUT"
 DEFS="-DUSER_SETUP_LOADED=1 -DILI9341_DRIVER=1 -DTFT_WIDTH=240 -DTFT_HEIGHT=320 -DTFT_DC=2 -DTFT_CS=15
       -DLOAD_GLCD=1 -DLOAD_FONT2=1 -DSMOOTH_FONT=1 -DDISABLE_ALL_LIBRARY_WARNINGS=1"
-# the CYD's screens, then the round board's (round_*.png)
-for BOARD in "" "-DBOARD_ROUND=1"; do
+# the CYD's screens, then the round board's (round_*.png) and the 7"'s (7inch_*.png)
+for BOARD in "" "-DBOARD_ROUND=1" "-DBOARD_7INCH=1"; do
   g++ -O2 -std=gnu++17 -w $DEFS $BOARD -I"$HERE/stubs" -I"$TFT" -I"$ROOT/src" \
       "$HERE/preview.cpp" "$TFT/TFT_eSPI.cpp" -o "$OUT/preview"
   (cd "$OUT" && ./preview)
@@ -35,7 +35,9 @@ for f in glob.glob(os.path.join(sys.argv[1], "*.rgb565")):
                 if (x - w / 2 + 0.5) ** 2 + (y - h / 2 + 0.5) ** 2 > (w / 2) ** 2:
                     px[x, y] = (0, 0, 0)
     png = base + ".png"
-    img.resize((w * 2, h * 2), Image.NEAREST).save(png)
+    if w < 800:  # small screens at double size, to see the detail
+        img = img.resize((w * 2, h * 2), Image.NEAREST)
+    img.save(png)
     os.remove(f)
     print("wrote", png)
 PY

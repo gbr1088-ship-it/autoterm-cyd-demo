@@ -23,6 +23,7 @@ FONTS = {
     "LX_11": (11, ASCII),  # small labels, km/h scale
     "LX_15": (15, ASCII),  # numerals on the side-by-side dials, odometer
     "LX_21": (21, ASCII),  # numerals on the big dials
+    "LX_30": (30, ASCII),  # numerals on the 7" screen's dials
     "LX_48": (48, CAPS),   # the LOMAX name on the start-up screen
 }
 

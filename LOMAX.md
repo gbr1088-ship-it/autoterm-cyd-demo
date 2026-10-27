@@ -2,13 +2,23 @@
 
 A dash-mounted speedometer, rev counter and clock for a Lomax on a 2CV
 engine and chassis. It's a separate firmware (`src/lomax.cpp`) that runs on
-either of two boards:
+any of three boards:
 
 - the 2.8" **ESP32-2432S028** ("Cheap Yellow Display"), the heater firmware's board:
   `pio run -e lomax -t upload`
 - the round 1.28" **Waveshare ESP32-S3-Touch-LCD-1.28-B**, one dial at a time:
   `pio run -e lomax_round -t upload`
   (see [Round screen](#round-screen-waveshare-esp32-s3-touch-lcd-128-b))
+- the 7" **Waveshare ESP32-S3-Touch-LCD-7** (the heater firmware's big screen),
+  landscape, everything on one screen: `pio run -e lomax7 -t upload`
+  (see [7 inch screen](#7-inch-screen-waveshare-esp32-s3-touch-lcd-7))
+
+### On the 7 inch screen
+![](assets/lomax_7inch.png)
+
+| Start-up | No GPS fix yet |
+|---|---|
+| ![](assets/lomax_7inch_splash.png) | ![](assets/lomax_7inch_nogps.png) |
 
 ### On the CYD
 
@@ -166,14 +176,16 @@ The start-up screen shows the winged LoMAX / ENGLAND / STOURBRIDGE badge,
 cut out of a photo of the sticker (`assets/lomax_logo_photo.jpg`).
 `tools/lomax_logo.py` removes the blue cloth around it and makes it black and
 white (`assets/lomax_logo.png`). Then one copy is made per screen: 300 px wide
-for the CYD, and 220 px wide so the wings fit inside the round screen.
+for the CYD, 220 px wide so the wings fit inside the round screen, and 520 px
+for the 7" (enlarged from the photo, so a little soft).
 ```
 python tools/lomax_logo.py
 python tools/png2rgb565.py assets/lomax_logo.png --max 300 200 --bg 0x0841 --name lomax_logo --out src/lomax_logo.h
 python tools/png2rgb565.py assets/lomax_logo.png --max 220 160 --bg 0x0841 --name lomax_logo --out src/lomax_logo_round.h
+python tools/png2rgb565.py assets/lomax_logo.png --max 520 300 --grow --bg 0x0841 --name lomax_logo --out src/lomax_logo7.h
 ```
 For a sharper badge, replace `assets/lomax_logo.png` with a clean scan or
-vector export of the artwork (transparent background) and run the last two
+vector export of the artwork (transparent background) and run the last three
 lines. Without those headers, the dash falls back to a plain LOMAX enamel
 badge.
 
@@ -223,6 +235,43 @@ socket). It also has a battery connector, but leave that empty in a car.
 
 If the picture turns out sideways, change `SCREEN_ROTATION`. If it's
 garbled, lower `SPI_FREQUENCY` in `platformio.ini` to 40000000.
+
+## 7 inch screen (Waveshare ESP32-S3-Touch-LCD-7)
+The heater firmware's 800 × 480 board, used landscape. Everything is on one
+screen: a 340 px speedo (with km/h, odometer and trip) and rev counter, the
+Roman-numeral clock between them at the top, the indicators, sidelights and
+main beam in the top corners, and the GPS lamp low in the middle. There's
+only one page, so a tap does nothing; holding still zeroes the trip.
+
+Its backlight can only be switched on or off, so at night (sidelights on) the
+firmware dims the picture itself instead, by `BRIGHT_NIGHT`.
+
+**Inputs.** The screen uses nearly all of this board's pins. Free are IO6 on
+the Sensor header (your heater's temperature probe uses it, so it's known
+good) and the TF card slot's IO11–13. The lamps go through a small **PCF8574
+I2C expander module** on the I2C header instead:
+
+| Signal | Where |
+|---|---|
+| GPS TX → | IO13, the TF slot's MISO line, through a micro SD sniffer breakout (no card) |
+| Tacho (coil) | IO6, Sensor header (pull-up to that header's 3.3 V) |
+| Left indicator | PCF8574 P0 |
+| Right indicator | PCF8574 P1 |
+| Main beam | PCF8574 P2 |
+| Sidelights | PCF8574 P3 |
+| PCF8574 SDA / SCL / VCC / GND | I2C header: IO8 / IO9 / 3.3 V / GND |
+
+The optocoupler circuits are the same as below: each lamp opto's output
+transistor goes from a PCF8574 input to GND, and the coil's goes to IO6.
+Leave the PCF8574's address pins A0–A2 at GND (address 0x20). Use a PCF8574,
+not a PCF8574**A**. The board's IO expander answers at 0x23, 0x24, 0x26 and
+0x38, which clash with some of the other settings.
+
+**Power** it with 5 V from the buck converter. The 7" backlight draws more
+than the small screens, so use a 2 A converter.
+
+`P7_PORTRAIT=3` in `platformio.ini` (the `lomax7` section) turns the picture
+upside down, if that suits how the screen is mounted.
 
 ## Things to know
 - **Sunlight.** The CYD's screen is a small TN LCD, and it washes out in

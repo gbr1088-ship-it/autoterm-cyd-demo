@@ -1,5 +1,6 @@
-// Lomax dashboard for the ESP32-2432S028 ("Cheap Yellow Display"), or the
-// round Waveshare ESP32-S3-Touch-LCD-1.28-B (BOARD_ROUND).
+// Lomax dashboard for the ESP32-2432S028 ("Cheap Yellow Display"), the
+// round Waveshare ESP32-S3-Touch-LCD-1.28-B (BOARD_ROUND), or the 7"
+// Waveshare ESP32-S3-Touch-LCD-7 in landscape (BOARD_7INCH).
 //
 // Speed from a GPS module, engine speed from the ignition coil's pulses, the
 // indicator, main beam and sidelight lamps, an odometer and trip, and an old
@@ -8,10 +9,11 @@
 //
 //   pio run -e lomax -t upload           (CYD)
 //   pio run -e lomax_round -t upload     (round)
+//   pio run -e lomax7 -t upload          (7")
 #include <Arduino.h>
 #include <Preferences.h>
 #include <TFT_eSPI.h>
-#if defined(BOARD_ROUND)
+#if defined(BOARD_ROUND) || defined(BOARD_7INCH)
 #include <Wire.h>
 #else
 #include <XPT2046_Touchscreen.h>
@@ -20,14 +22,26 @@
 #include <time.h>
 #include "lomax_config.h"
 
+#if defined(BOARD_7INCH)
+#include "display7.h"  // tft: a full-screen sprite, copied to the panel in the background
+
+// the sprites keep their pixels byte-swapped, as tft does, so rows copy straight in
+void screenPush(TFT_eSprite &s, int sx, int sy, int w, int h, int x, int y) {
+  uint16_t *p = (uint16_t *)s.getPointer();
+  for (int r = 0; r < h; r++) tft.pushImage(x, y + r, w, 1, p + (sy + r) * s.width() + sx);
+}
+#else
 TFT_eSPI tft;
 
 void screenPush(TFT_eSprite &s, int sx, int sy, int w, int h, int x, int y) { s.pushSprite(x, y, sx, sy, w, h); }
+#endif
 void screenFill(int x, int y, int w, int h, uint16_t colour) { tft.fillRect(x, y, w, h, colour); }
 
 #include "lomax_draw.h"
 
-#if defined(BOARD_ROUND)
+#if defined(BOARD_7INCH)
+// the GT911 touch is display7.h's
+#elif defined(BOARD_ROUND)
 // CST816S touch controller on the board's I2C bus (shared with the IMU)
 #define TOUCH_SDA 6
 #define TOUCH_SCL 7
@@ -52,7 +66,24 @@ DashState st;
 // ================================================================ backlight
 float blLevel = 0;  // fades towards the day or night level
 
+#if defined(BOARD_7INCH)
+// The 7"'s backlight is on or off, so it dims by darkening the picture on
+// its way to the panel instead.
+float shownLevel = -1;
+
+void backlight(uint8_t v) {
+  static int on = -1;
+  if ((v > 0) != on) display7Backlight(on = v > 0);  // an I2C write: only on a change
+  float level = v / 255.0f;
+  if (v && fabsf(level - shownLevel) > 0.02f) {
+    makeGammaLuts(level);
+    tft.mark(0, 0, UI_W, UI_H);  // send the whole screen again, darker or lighter
+    shownLevel = level;
+  }
+}
+#else
 void backlight(uint8_t v) { ledcWrite(BL_CHANNEL, v); }
+#endif
 
 void fadeBacklight(float dt) {
   float want = st.side ? BRIGHT_NIGHT : BRIGHT_DAY;
@@ -95,16 +126,35 @@ struct Lamp {
 };
 Lamp lamps[] = {{IND_L_PIN, &st.indL, 0}, {IND_R_PIN, &st.indR, 0}, {BEAM_PIN, &st.beam, 0}, {SIDE_PIN, &st.side, 0}};
 
+#if defined(LAMP_PCF8574)
+// The lamps come through a PCF8574 on the I2C bus: the "pins" are its
+// inputs P0-P7. Writing 1s makes them inputs with weak pull-ups.
+uint8_t expanderBits = 0xFF;
+
+void beginLamps() {
+  Wire.beginTransmission(LAMP_PCF8574);
+  Wire.write(0xFF);
+  if (Wire.endTransmission() != 0) Serial.println("[lamps] no PCF8574 answering");
+}
+
+bool lampLevel(int pin) { return (expanderBits >> pin) & 1; }
+#else
 void beginLamps() {
   for (auto &l : lamps)
     if (l.pin >= 0) pinMode(l.pin, LAMPS_ACTIVE_LOW ? INPUT_PULLUP : INPUT_PULLDOWN);
 }
 
+bool lampLevel(int pin) { return digitalRead(pin); }
+#endif
+
 // every 10 ms; a change has to be there for two readings
 void readLamps() {
+#if defined(LAMP_PCF8574)
+  if (Wire.requestFrom((uint8_t)LAMP_PCF8574, (uint8_t)1) == 1) expanderBits = Wire.read();
+#endif
   for (auto &l : lamps) {
     if (l.pin < 0) continue;
-    bool lit = digitalRead(l.pin) == (LAMPS_ACTIVE_LOW ? LOW : HIGH);
+    bool lit = lampLevel(l.pin) == (LAMPS_ACTIVE_LOW ? LOW : HIGH);
     if (lit == *l.state) l.differ = 0;
     else if (++l.differ >= 2) { *l.state = lit; l.differ = 0; }
   }
@@ -250,7 +300,10 @@ void updateClock() {
 }
 
 // ================================================================ touch
-#if defined(BOARD_ROUND)
+#if defined(BOARD_7INCH)
+void beginTouch() {}  // display7Begin() starts it
+bool touched(int &x, int &y) { return touch7Read(x, y); }
+#elif defined(BOARD_ROUND)
 void beginTouch() {
   pinMode(TOUCH_RST, OUTPUT);
   digitalWrite(TOUCH_RST, LOW);
@@ -310,7 +363,7 @@ void handleTouch() {
     Serial.println("trip reset");
   }
   if (!down && pressStart) {
-    if (!pressHandled) {
+    if (!pressHandled && nextPage(page) != page) {  // the 7" has only one page
       Page next = nextPage(page);
       showPage(next, st);
       updateDash(st, 0, true);
@@ -365,6 +418,9 @@ void setup() {
   st.odo = savedOdo = prefs.getFloat("odo", 0);
   st.trip = prefs.getFloat("trip", 0);
 
+#if defined(BOARD_7INCH)
+  display7Begin();  // screen, touch and the I2C bus (also the lamps' expander)
+#else
   tft.init();  // switches the backlight on, so the dimmer takes the pin after it
   tft.setRotation(SCREEN_ROTATION);
   tft.fillScreen(C_DASH);
@@ -372,6 +428,7 @@ void setup() {
   ledcAttachPin(TFT_BL, BL_CHANNEL);
   backlight(0);
   beginTouch();
+#endif
 
   // the logo fades in
   drawSplash();
@@ -393,7 +450,7 @@ void setup() {
 
   uint8_t p = prefs.getUChar("page", 255);
   showPage(hasPage(p) ? (Page)p : nextPage((Page)(PAGE_COUNT - 1)), st);
-  Serial.printf("heap free %u, largest block %u\n", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+  Serial.printf("heap free %u, largest block %u\n", (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
 #if SHOW_LAMP_CHECK
   lampCheck();
 #endif

@@ -6,27 +6,29 @@ HardwareSerial Serial;
 SPIClass SPI;
 TFT_eSPI tft;
 
-static uint16_t fb[240][320];  // the top-left SCR_W x SCR_H of it is the screen
+static uint16_t fb[480][800];  // the top-left SCR_W x SCR_H of it is the screen
 
 void screenPush(TFT_eSprite &s, int sx, int sy, int w, int h, int x, int y) {
   const uint16_t *p = (const uint16_t *)s.getPointer();
   for (int r = 0; r < h; r++)
     for (int c = 0; c < w; c++)
-      if (y + r >= 0 && y + r < 240 && x + c >= 0 && x + c < 320) {
+      if (y + r >= 0 && y + r < 480 && x + c >= 0 && x + c < 800) {
         uint16_t v = p[(sy + r) * s.width() + sx + c];
         fb[y + r][x + c] = (v >> 8) | (v << 8);  // sprites keep their pixels byte-swapped
       }
 }
 
 void screenFill(int x, int y, int w, int h, uint16_t col) {
-  for (int r = y; r < y + h && r < 240; r++)
-    for (int c = x; c < x + w && c < 320; c++) fb[r][c] = col;
+  for (int r = y; r < y + h && r < 480; r++)
+    for (int c = x; c < x + w && c < 800; c++) fb[r][c] = col;
 }
 
 #include "lomax_draw.h"
 
 #if defined(BOARD_ROUND)
 #define PREFIX "round_"
+#elif defined(BOARD_7INCH)
+#define PREFIX "7inch_"
 #else
 #define PREFIX ""
 #endif
