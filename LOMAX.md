@@ -161,15 +161,21 @@ between readings, but it lags a moment behind the car. A u-blox module can do
   but RMC, then CFG-CFG "save". This only sticks on modules with flash or a
   backup battery (most NEO-M8N boards).
 
-## Your own logo
-Without a logo file, the start-up screen shows LOMAX on a red enamel oval
-badge. To show your own artwork instead, use a PNG with a transparent or dark
-background:
+## The logo
+The start-up screen shows the winged LoMAX / ENGLAND / STOURBRIDGE badge,
+cut out of a photo of the sticker (`assets/lomax_logo_photo.jpg`).
+`tools/lomax_logo.py` removes the blue cloth around it and makes it black and
+white (`assets/lomax_logo.png`). Then one copy is made per screen: 300 px wide
+for the CYD, and 220 px wide so the wings fit inside the round screen.
 ```
+python tools/lomax_logo.py
 python tools/png2rgb565.py assets/lomax_logo.png --max 300 200 --bg 0x0841 --name lomax_logo --out src/lomax_logo.h
-pio run -e lomax -t upload
+python tools/png2rgb565.py assets/lomax_logo.png --max 220 160 --bg 0x0841 --name lomax_logo --out src/lomax_logo_round.h
 ```
-When `src/lomax_logo.h` exists, it's used. Delete it to go back to the badge.
+For a sharper badge, replace `assets/lomax_logo.png` with a clean scan or
+vector export of the artwork (transparent background) and run the last two
+lines. Without those headers, the dash falls back to a plain LOMAX enamel
+badge.
 
 ## Settings (`src/lomax_config.h`)
 | Setting | Default | |

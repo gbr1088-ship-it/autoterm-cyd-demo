@@ -16,8 +16,13 @@
 #include <math.h>
 #include "lomax_config.h"
 #include "lomax_fonts.h"
-#if __has_include("lomax_logo.h")
-#include "lomax_logo.h"  // made from your own artwork by tools/png2rgb565.py, see LOMAX.md
+// the winged badge for the start-up screen, made by tools/lomax_logo.py and
+// tools/png2rgb565.py (see LOMAX.md); without it, a plain LOMAX badge is drawn
+#if defined(BOARD_ROUND) && __has_include("lomax_logo_round.h")
+#include "lomax_logo_round.h"  // narrower, to fit inside the round screen
+#define HAVE_LOMAX_LOGO 1
+#elif !defined(BOARD_ROUND) && __has_include("lomax_logo.h")
+#include "lomax_logo.h"
 #define HAVE_LOMAX_LOGO 1
 #endif
 
@@ -692,7 +697,7 @@ void updateDash(const DashState &st, float dt, bool snap = false) {
 }
 
 // ================================================================ start-up
-// The logo: your own artwork if there is a src/lomax_logo.h, otherwise the
+// The logo: the winged Lomax badge if its header is there, otherwise the
 // name on a chrome-edged enamel badge (oval, or round on the round screen).
 void drawSplash() {
   screenFill(0, 0, SCR_W, SCR_H, C_DASH);
