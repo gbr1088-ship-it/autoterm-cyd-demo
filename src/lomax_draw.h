@@ -21,14 +21,19 @@
 #if defined(BOARD_ROUND) && __has_include("lomax_logo_round.h")
 #include "lomax_logo_round.h"  // narrower, to fit inside the round screen
 #define HAVE_LOMAX_LOGO 1
-#elif !defined(BOARD_ROUND) && __has_include("lomax_logo.h")
+#elif defined(BOARD_7INCH) && __has_include("lomax_logo7.h")
+#include "lomax_logo7.h"       // bigger, for the 7" screen
+#define HAVE_LOMAX_LOGO 1
+#elif !defined(BOARD_ROUND) && !defined(BOARD_7INCH) && __has_include("lomax_logo.h")
 #include "lomax_logo.h"
 #define HAVE_LOMAX_LOGO 1
 #endif
 
-// the screen: the CYD's 320 x 240, or the round 240 x 240 board's
+// the screen: the CYD's 320 x 240, the round board's 240 x 240 or the 7"'s 800 x 480
 #if defined(BOARD_ROUND)
 const int SCR_W = 240, SCR_H = 240;
+#elif defined(BOARD_7INCH)
+const int SCR_W = 800, SCR_H = 480;  // the 7" panel, landscape
 #else
 const int SCR_W = 320, SCR_H = 240;
 #endif
@@ -148,6 +153,14 @@ void text(Dial &d, const char *str, float x, float y, const uint8_t *font, uint1
   d.face->drawString(str, (int)roundf(x), (int)roundf(y));
 }
 
+// The 7" screen's dials are much bigger than the CYD's: larger type, and
+// lines scaled up with them (sk). The smaller dials keep their sizes.
+bool huge(const Dial &d) { return d.Rf > 130; }
+float sk(const Dial &d) { return huge(d) ? d.Rf / 91.6f : 1; }  // 91.6: the CYD's big dial
+const uint8_t *numFont(const Dial &d) { return huge(d) ? LX_30 : d.big ? LX_21 : LX_15; }
+const uint8_t *labelFont(const Dial &d) { return huge(d) ? LX_21 : d.big ? LX_15 : LX_11; }
+const uint8_t *smallFont(const Dial &d) { return huge(d) ? LX_15 : LX_11; }
+
 // A short tick from r0 out to r1.
 void tick(Dial &d, float deg, float r0, float r1, float w, uint16_t col) {
   d.face->drawWedgeLine(px(d, r0, deg), py(d, r0, deg), px(d, r1, deg), py(d, r1, deg), w, w, col);
@@ -156,7 +169,7 @@ void tick(Dial &d, float deg, float r0, float r1, float w, uint16_t col) {
 // ================================================================ odometer
 // A row of drum digits: white on black, the tenths black on white.
 void drawDrums(Dial &d, float cx, float cy, float miles, int whole, bool big) {
-  int cw = big ? 10 : 8, ch = big ? 15 : 12;
+  int cw = huge(d) ? 14 : big ? 10 : 8, ch = huge(d) ? 21 : big ? 15 : 12;
   int n = whole + 1;
   int w = n * cw + 4, h = ch + 4;
   int x0 = (int)roundf(cx - w / 2.0f), y0 = (int)roundf(cy - h / 2.0f);
@@ -165,7 +178,7 @@ void drawDrums(Dial &d, float cx, float cy, float miles, int whole, bool big) {
   long mod = 10;
   for (int i = 1; i < n; i++) mod *= 10;
   tenths %= mod;
-  useFont(*d.face, big ? LX_15 : LX_11);
+  useFont(*d.face, huge(d) ? LX_21 : big ? LX_15 : LX_11);
   d.face->setTextDatum(MC_DATUM);
   for (int i = n - 1; i >= 0; i--) {
     int digit = tenths % 10;
@@ -197,7 +210,7 @@ void drawScale(Dial &d) {
   bool speedo = d.kind == DIAL_SPEEDO;
   float Rf = d.Rf, rt = Rf - 2;  // ticks hang from rt
   float vmax = speedo ? SPEEDO_MAX : TACHO_MAX * 1000;
-  float wMajor = d.big ? 1.3f : 1.0f, wMinor = d.big ? 0.7f : 0.55f;
+  float wMajor = (d.big ? 1.3f : 1.0f) * sk(d), wMinor = (d.big ? 0.7f : 0.55f) * sk(d);
 
   if (!speedo) {  // red band, under the ticks
     float a0 = sweepAngle(TACHO_RED_FROM * 1000, vmax), a1 = SWEEP_TO;
@@ -211,30 +224,31 @@ void drawScale(Dial &d) {
       float a = sweepAngle(v, vmax);
       if (v % 10 == 0) tick(d, a, rt - Rf * 0.15f, rt, wMajor, C_INK);
       else if (v % 5 == 0) tick(d, a, rt - Rf * 0.09f, rt, wMinor + 0.2f, C_INK);
-      else if (d.big) tick(d, a, rt - Rf * 0.05f, rt, 0.4f, C_INK);
+      else if (d.big) tick(d, a, rt - Rf * 0.05f, rt, 0.4f * sk(d), C_INK);
     }
     for (int v = 0; v <= SPEEDO_MAX; v += 10) {
       char s[4];
       snprintf(s, sizeof s, "%d", v);
       float a = sweepAngle(v, vmax), r = Rf * (d.big ? 0.69f : 0.66f);
-      text(d, s, px(d, r, a), py(d, r, a), d.big ? LX_21 : LX_15, C_INK);
+      text(d, s, px(d, r, a), py(d, r, a), numFont(d), C_INK);
     }
-    text(d, "MPH", d.c, d.c - Rf * (d.big ? 0.22f : 0.34f), d.big ? LX_15 : LX_11, C_INK);
+    text(d, "MPH", d.c, d.c - Rf * (d.big ? 0.22f : 0.34f), labelFont(d), C_INK);
 #if SPEEDO_KMH_SCALE
     if (d.big) {  // inner km/h scale
       float ri = Rf * 0.50f;
       int kmax = (int)(SPEEDO_MAX * 1.609f);
-      d.face->drawArc(d.c, d.c, ri + 3, ri + 2, SWEEP_FROM + 180, sweepAngle(kmax / 1.609f, vmax) + 180, C_RED, C_FACE, true);
+      d.face->drawArc(d.c, d.c, ri + 2 + sk(d), ri + 2, SWEEP_FROM + 180, sweepAngle(kmax / 1.609f, vmax) + 180, C_RED, C_FACE, true);
       for (int k = 0; k <= kmax; k += 10) {
         float a = sweepAngle(k / 1.609f, vmax);
-        tick(d, a, ri + 2.5f, ri + (k % 20 ? 5.5f : 8), k % 20 ? 0.45f : 0.7f, C_RED);
+        tick(d, a, ri + 2.5f * sk(d), ri + (k % 20 ? 5.5f : 8) * sk(d), (k % 20 ? 0.45f : 0.7f) * sk(d), C_RED);
 #if defined(BOARD_ROUND)
         if (k == 0) continue;  // its 0 would sit on the odometer
 #endif
         if (k % 20 == 0 && k <= 140) {
           char s[4];
           snprintf(s, sizeof s, "%d", k);
-          text(d, s, px(d, ri - 6, a), py(d, ri - 6, a), LX_11, C_RED);
+          float rn = ri - 6 * sk(d);
+          text(d, s, px(d, rn, a), py(d, rn, a), smallFont(d), C_RED);
         }
       }
     }
@@ -244,17 +258,17 @@ void drawScale(Dial &d) {
       float a = sweepAngle(v * 250, vmax);
       if (v % 4 == 0) tick(d, a, rt - Rf * 0.15f, rt, wMajor, C_INK);
       else if (v % 2 == 0) tick(d, a, rt - Rf * 0.09f, rt, wMinor + 0.2f, C_INK);
-      else if (d.big) tick(d, a, rt - Rf * 0.05f, rt, 0.4f, C_INK);
+      else if (d.big) tick(d, a, rt - Rf * 0.05f, rt, 0.4f * sk(d), C_INK);
     }
     for (int v = 0; v <= TACHO_MAX; v++) {
       char s[3];
       snprintf(s, sizeof s, "%d", v);
       float a = sweepAngle(v * 1000, vmax), r = Rf * (d.big ? 0.69f : 0.66f);
-      text(d, s, px(d, r, a), py(d, r, a), d.big ? LX_21 : LX_15, v >= TACHO_RED_FROM ? C_RED : C_INK);
+      text(d, s, px(d, r, a), py(d, r, a), numFont(d), v >= TACHO_RED_FROM ? C_RED : C_INK);
     }
-    text(d, "RPM", d.c, d.c - Rf * 0.34f, d.big ? LX_15 : LX_11, C_INK);
-    text(d, "x1000", d.c, d.c - Rf * 0.34f + (d.big ? 14 : 11), LX_11, C_INK);
-    text(d, "LOMAX", d.c, d.c + Rf * 0.42f, d.big ? LX_15 : LX_11, shade(C_FACE_EDGE, 0.55f));
+    text(d, "RPM", d.c, d.c - Rf * 0.34f, labelFont(d), C_INK);
+    text(d, "x1000", d.c, d.c - Rf * 0.34f + (huge(d) ? 20 : d.big ? 14 : 11), smallFont(d), C_INK);
+    text(d, "LOMAX", d.c, d.c + Rf * 0.42f, labelFont(d), shade(C_FACE_EDGE, 0.55f));
   }
 }
 
@@ -272,7 +286,7 @@ bool updateSpeedoInfo(Dial &d, const DashState &st, bool force) {
   if (d.big && (force || trip != d.tripShown)) {
     drawDrums(d, d.c, tripY(d), st.trip, 3, true);
 #if !defined(BOARD_ROUND)  // no room beside it on the round dial: the trip is the short one
-    text(d, "TRIP", d.c - d.Rf * 0.27f, tripY(d), LX_11, C_INK, MR_DATUM);
+    text(d, "TRIP", d.c - d.Rf * 0.27f, tripY(d), smallFont(d), C_INK, MR_DATUM);
 #endif
     d.tripShown = trip;
     changed = true;
@@ -354,7 +368,7 @@ void drawClockFace(Dial &d) {
     Roman rn{&d, i * 30.0f, r0 - h * 0.8f, h, h * 0.08f, h * 0.035f};
     rn.draw(num[i]);
   }
-  text(d, "LOMAX", d.c, d.c - Rf * 0.36f, LX_11, C_INK);
+  text(d, "LOMAX", d.c, d.c - Rf * 0.36f, smallFont(d), C_INK);
 }
 
 void buildFace(Dial &d) {
@@ -402,9 +416,9 @@ void spot(float x, float y, float r, uint16_t col, int oy) {
 // a needle from the tail through the centre to the tip, with its shadow
 void drawNeedle(Dial &d, float deg, int oy) {
   float Rf = d.Rf, tail = Rf * 0.2f, tip = Rf * 0.9f;
-  float wb = d.big ? 2.6f : 2.0f, wt = 0.7f;
+  float wb = (d.big ? 2.6f : 2.0f) * sk(d), wt = 0.7f * sk(d);
   for (int pass = 0; pass < 2; pass++) {
-    float o = pass ? 0 : (d.big ? 2.5f : 2);  // shadow first, down and right
+    float o = pass ? 0 : (d.big ? 2.5f : 2) * sk(d);  // shadow first, down and right
     uint16_t col = pass ? C_NEEDLE : shade(C_FACE_EDGE, 0.7f);
     wedge(px(d, -tail, deg) + o, py(d, -tail, deg) + o, d.c + o, d.c + o, wb * 0.8f, wb, col, oy);
     wedge(d.c + o, d.c + o, px(d, tip, deg) + o, py(d, tip, deg) + o, wb, wt, col, oy);
@@ -431,8 +445,8 @@ void drawHands(Dial &d, const DashState &st, int oy) {
   float hDeg = ((st.hh % 12) + st.mm / 60.0f) * 30, mDeg = (st.mm + st.ss / 60.0f) * 6, sDeg = st.ss * 6;
   uint16_t hand = st.timeOk ? C_BLUED : shade(C_FACE_EDGE, 0.75f);
   if (d.big) {
-    drawBreguet(d, hDeg, Rf * 0.55f, Rf * 0.42f, Rf * 0.075f, 2.2f, hand, oy);
-    drawBreguet(d, mDeg, Rf * 0.84f, Rf * 0.66f, Rf * 0.06f, 1.8f, hand, oy);
+    drawBreguet(d, hDeg, Rf * 0.55f, Rf * 0.42f, Rf * 0.075f, 2.2f * sk(d), hand, oy);
+    drawBreguet(d, mDeg, Rf * 0.84f, Rf * 0.66f, Rf * 0.06f, 1.8f * sk(d), hand, oy);
   } else {
     wedge(d.c, d.c, px(d, Rf * 0.55f, hDeg), py(d, Rf * 0.55f, hDeg), 1.6f, 0.6f, hand, oy);
     wedge(d.c, d.c, px(d, Rf * 0.85f, mDeg), py(d, Rf * 0.85f, mDeg), 1.3f, 0.4f, hand, oy);
@@ -440,10 +454,10 @@ void drawHands(Dial &d, const DashState &st, int oy) {
   if (st.timeOk) {  // seconds, with a counterweight
     float tail = Rf * (d.big ? 0.24f : 0.2f), tip = Rf * 0.9f;
     uint16_t col = rgb(150, 24, 20);
-    wedge(px(d, -tail, sDeg), py(d, -tail, sDeg), px(d, tip, sDeg), py(d, tip, sDeg), d.big ? 0.8f : 0.5f, 0.35f, col, oy);
-    if (d.big) spot(px(d, -tail, sDeg), py(d, -tail, sDeg), 3, col, oy);
+    wedge(px(d, -tail, sDeg), py(d, -tail, sDeg), px(d, tip, sDeg), py(d, tip, sDeg), (d.big ? 0.8f : 0.5f) * sk(d), 0.35f * sk(d), col, oy);
+    if (d.big) spot(px(d, -tail, sDeg), py(d, -tail, sDeg), 3 * sk(d), col, oy);
   }
-  spot(d.c, d.c, d.big ? 4 : 2.2f, C_BRASS, oy);
+  spot(d.c, d.c, (d.big ? 4 : 2.2f) * sk(d), C_BRASS, oy);
 }
 
 void renderDial(Dial &d, const DashState &st) {
@@ -467,7 +481,13 @@ void renderDial(Dial &d, const DashState &st) {
 
 // ================================================================ lamps
 // Tell-tales, drawn by sampling each pixel 4 x 4 times against the shape.
-const int LAMP_W = 34, LAMP_H = 26;
+const int LAMP_W = 34, LAMP_H = 26;  // the shapes' design size
+#if defined(BOARD_7INCH)
+const float LAMP_SCALE = 1.6f;       // lamps around the dials, on the screen
+#else
+const float LAMP_SCALE = 1;
+#endif
+const int LW = (int)(LAMP_W * LAMP_SCALE + 0.99f), LH = (int)(LAMP_H * LAMP_SCALE + 0.99f);
 TFT_eSprite *lampSpr = nullptr;
 
 bool inLamp(LampKind k, float x, float y) {
@@ -536,23 +556,26 @@ void drawLamp(LampKind k, bool on, int x, int y) {
   uint16_t col = !on ? C_LAMP_OFF : (k == LAMP_BEAM ? C_BLUE : k == LAMP_GPS ? C_AMBER : C_GREEN);
   if (k == LAMP_GPS) {  // lit while there's no fix, so the speedo can't be trusted
     lampSpr->fillSprite(C_DASH);
-    lampSpr->loadFont(LX_15);
+    lampSpr->loadFont(LAMP_SCALE > 1 ? LX_21 : LX_15);
     lampSpr->setTextDatum(MC_DATUM);
     lampSpr->setTextColor(col, C_DASH);
-    lampSpr->drawString("GPS", LAMP_W / 2, LAMP_H / 2 + 1);
+    lampSpr->drawString("GPS", LW / 2, LH / 2 + 1);
     lampSpr->unloadFont();
-    lampSpr->drawRoundRect(1, 3, LAMP_W - 2, LAMP_H - 6, 4, col);
-    screenPush(*lampSpr, 0, 0, LAMP_W, LAMP_H, x, y);
+    int m = (int)(3 * LAMP_SCALE);
+    lampSpr->drawRoundRect(1, m, LW - 2, LH - 2 * m, 4, col);
+    if (LAMP_SCALE > 1) lampSpr->drawRoundRect(2, m + 1, LW - 4, LH - 2 * m - 2, 3, col);
+    screenPush(*lampSpr, 0, 0, LW, LH, x, y);
     return;
   }
-  for (int py = 0; py < LAMP_H; py++)
-    for (int px = 0; px < LAMP_W; px++) {
+  for (int py = 0; py < LH; py++)
+    for (int px = 0; px < LW; px++) {
       int n = 0;
       for (int sy = 0; sy < 4; sy++)
-        for (int sx = 0; sx < 4; sx++) n += inLamp(k, px + (sx + 0.5f) / 4, py + (sy + 0.5f) / 4);
+        for (int sx = 0; sx < 4; sx++)
+          n += inLamp(k, (px + (sx + 0.5f) / 4) / LAMP_SCALE, (py + (sy + 0.5f) / 4) / LAMP_SCALE);
       lampSpr->drawPixel(px, py, mix(C_DASH, col, n / 16.0f));
     }
-  screenPush(*lampSpr, 0, 0, LAMP_W, LAMP_H, x, y);
+  screenPush(*lampSpr, 0, 0, LW, LH, x, y);
 }
 
 // ================================================================ pages
@@ -575,6 +598,14 @@ PageLayout layouts[PAGE_COUNT] = {
     {1, {{DIAL_SPEEDO, 0, 0, 240, true}}, true, {}, ROW_LAMPS},
     {1, {{DIAL_TACHO, 0, 0, 240, true}}, true, {}, ROW_LAMPS},
     {1, {{DIAL_CLOCK, 0, 0, 240, true}}, true, {}, {{-0.42f, 0}, {0.42f, 0}, {0.3f, 0.4f}, {-0.3f, 0.4f}, {0, 0.4f}}},
+};
+#elif defined(BOARD_7INCH)
+// one page: a big speedo and rev counter, the clock between them at the top,
+// the indicators and lamps in the top corners, the GPS lamp low in the middle
+PageLayout layouts[PAGE_COUNT] = {
+    {3, {{DIAL_SPEEDO, 14, 126, 340, true}, {DIAL_TACHO, 446, 126, 340, true}, {DIAL_CLOCK, 300, 4, 200, true}},
+     false, {{18, 16}, {728, 16}, {650, 16}, {96, 16}, {373, 420}}},
+    {0}, {0}, {0},
 };
 #else
 // side by side: speedo and tacho, a small clock between them at the top
@@ -663,7 +694,7 @@ void showPage(Page p, const DashState &st) {
   if (!lampSpr) {
     lampSpr = new TFT_eSprite(&tft);
     lampSpr->setColorDepth(16);
-    lampSpr->createSprite(LAMP_W, LAMP_H);
+    lampSpr->createSprite(LW, LH);
   }
   drawLamps(st, true);
 }

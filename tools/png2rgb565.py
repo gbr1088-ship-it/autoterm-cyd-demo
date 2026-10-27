@@ -21,8 +21,12 @@ def rgb565_to_rgb(c):
     return ((c >> 11) << 3, ((c >> 5) & 0x3F) << 2, (c & 0x1F) << 3)
 
 
-def convert(src, max_size, bg565):
+def convert(src, max_size, bg565, grow=False):
     img = src.copy()
+    if grow:  # enlarge a small picture to fill max_size (thumbnail only shrinks)
+        k = min(max_size[0] / img.width, max_size[1] / img.height)
+        if k > 1:
+            img = img.resize((round(img.width * k), round(img.height * k)), Image.LANCZOS)
     img.thumbnail(tuple(max_size), Image.LANCZOS)
     canvas = Image.new("RGBA", img.size, rgb565_to_rgb(bg565) + (255,))
     canvas.alpha_composite(img)
@@ -50,12 +54,13 @@ ap.add_argument("--max", nargs=2, type=int, default=[280, 130], metavar=("W", "H
 ap.add_argument("--small-max", nargs=2, type=int, default=[110, 22], metavar=("W", "H"))
 ap.add_argument("--bg", default="0x1061", help="RGB565 splash background (C_BG)")
 ap.add_argument("--small-bg", default="0x18C2", help="RGB565 header background (C_PANEL)")
+ap.add_argument("--grow", action="store_true", help="enlarge the splash copy if it's smaller than --max")
 ap.add_argument("--name", default="logo", help="names in the header: <name>_bitmap, <NAME>_W, ...")
 ap.add_argument("--out", default=str(Path(__file__).resolve().parent.parent / "src" / "logo.h"))
 a = ap.parse_args()
 
 src = Image.open(a.image).convert("RGBA")
-big = convert(src, a.max, int(a.bg, 16))
+big = convert(src, a.max, int(a.bg, 16), a.grow)
 small_src = Image.open(a.small_image).convert("RGBA") if a.small_image else src
 small = convert(small_src, a.small_max, int(a.small_bg, 16))
 

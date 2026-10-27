@@ -14,6 +14,20 @@
 #define BEAM_PIN     21  // main beam
 #define SIDE_PIN     33  // sidelights
 #define SCREEN_ROTATION 0  // 0-3: turns the picture in 90 degree steps
+#elif defined(BOARD_7INCH)
+// Waveshare ESP32-S3-Touch-LCD-7: the screen takes nearly every pin. Free are
+// IO6 (Sensor header) and the TF card slot's IO11-13 (through a micro SD
+// "sniffer" breakout; no card is used). The lamps go through a PCF8574 I2C
+// expander module on the I2C header (IO8/IO9, shared with the touch).
+#define GPS_RX_PIN   13  // TF slot (its MISO): the GPS module's TX
+#define TACHO_PIN    6   // Sensor header: optocoupler output from the coil's negative
+#define LAMP_PCF8574 0x20  // the expander's address (A0-A2 to GND). Not 0x23,
+                           // 0x24 or 0x26: the board's CH422G answers there
+#define IND_L_PIN    0   // expander input P0: left indicator (or the only one)
+#define IND_R_PIN    1   // P1: right indicator. -1 if there is one lamp
+#define BEAM_PIN     2   // P2: main beam
+#define SIDE_PIN     3   // P3: sidelights
+#define SCREEN_ROTATION 0  // unused here: P7_PORTRAIT in platformio.ini turns the 7"
 #else
 // The CYD has three free pins on its connectors (IO35 on P3, IO22 and IO27
 // on CN1). The other three lamp inputs use the SD card slot's pins through
