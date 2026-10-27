@@ -1576,6 +1576,7 @@ bool phoneAllowed();
 void phoneStart();
 void phoneStop();
 void wifiOff();
+void webUpdateRoutes();
 
 // Pairing: tap MAIN on one screen (it accepts new remotes for a minute) and
 // REMOTE on the other (it forgets any old main screen and follows the first
@@ -2050,6 +2051,7 @@ void phoneStart() {
     });
     web.on("/icon.png", [] { web.send_P(200, "image/png", (const char *)WEBAPP_ICON_PNG, WEBAPP_ICON_PNG_LEN); });
     web.on("/manifest.json", [] { web.send_P(200, "application/manifest+json", WEBAPP_MANIFEST); });
+    webUpdateRoutes();
     web.onNotFound([] {  // any other address goes to the app
       web.sendHeader("Location", "/");
       web.send(302);
@@ -2438,6 +2440,15 @@ void installFailed(HTTPClient &http, const char *why) {
   showPage(PAGE_SYSTEM);
 }
 
+// the new version is on trial until it has run for 30 s (see checkNewFirmware)
+void startTrial() {
+  Preferences p;
+  p.begin("ota", false);
+  p.putBool("trial", true);
+  p.putUChar("tries", 0);
+  p.end();
+}
+
 void installUpdate() {
   if (busyForUpdate()) {
     updStatus = UPD_HEATER_ON;
@@ -2496,12 +2507,7 @@ void installUpdate() {
   if (!Update.end()) return installFailed(http, Update.errorString());
   http.end();
 
-  // the new version is on trial until it has run for 30 s (see checkNewFirmware)
-  Preferences p;
-  p.begin("ota", false);
-  p.putBool("trial", true);
-  p.putUChar("tries", 0);
-  p.end();
+  startTrial();
   drawInstallProgress(100);
   Serial.printf("[update] installed version %d, restarting\n", updVersion);
   delay(800);
@@ -2527,6 +2533,113 @@ void checkNewFirmware() {
     }
   }
   p.end();
+}
+
+// ---------------------------------------------------------------- update from a browser
+// With the phone network on, http://192.168.4.1/update takes a firmware file
+// (the .bin from .pio/build/<env>/firmware.bin, not the merged USB one) and
+// installs it, for a screen that's out of reach of the internet. Same rules
+// as the downloaded updates: not while the heater or windlass is running,
+// and the new version goes on trial.
+const char UPDATE_PAGE[] PROGMEM = R"HTML(<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Firmware update</title>
+<style>
+body{font:16px system-ui,sans-serif;max-width:420px;margin:24px auto;padding:0 16px;background:#111;color:#eee}
+h1{font-size:20px}p{color:#aaa}input,button{font:inherit;margin:8px 0;width:100%}
+button{padding:10px;border:0;border-radius:8px;background:#ff914c;color:#111;font-weight:600}
+button:disabled{opacity:.5}progress{width:100%;height:14px}#msg{color:#eee;min-height:1.4em}
+</style></head><body>
+<h1>Firmware update</h1>
+<p>Running version %VER% (%VAR%). Choose a firmware .bin file to install it.</p>
+<input type="file" id="f" accept=".bin">
+<button id="go">Install</button>
+<progress id="bar" max="100" value="0" hidden></progress>
+<div id="msg"></div>
+<script>
+const f=document.getElementById('f'),go=document.getElementById('go'),bar=document.getElementById('bar'),msg=document.getElementById('msg');
+go.onclick=()=>{
+  if(!f.files.length){msg.textContent='Choose a file first.';return}
+  const d=new FormData();d.append('fw',f.files[0]);
+  const x=new XMLHttpRequest();x.open('POST','/update');
+  x.upload.onprogress=e=>{if(e.lengthComputable)bar.value=e.loaded*100/e.total};
+  x.onload=()=>{msg.textContent=x.responseText;go.disabled=x.status==200};
+  x.onerror=()=>{msg.textContent='Upload failed.';go.disabled=false};
+  go.disabled=true;bar.hidden=false;bar.value=0;msg.textContent='Uploading...';x.send(d);
+};
+</script></body></html>)HTML";
+
+const char *webUpdErr = nullptr;  // why the upload was refused, or null
+size_t webUpdDone = 0;
+
+void webUpdateUpload() {
+  HTTPUpload &up = web.upload();
+  if (up.status == UPLOAD_FILE_START) {
+    webUpdErr = nullptr;
+    webUpdDone = 0;
+    if (busyForUpdate()) {
+      webUpdErr = "Turn the heater and windlass off first.";
+      return;
+    }
+    Serial.printf("[update] upload of %s\n", up.filename.c_str());
+    tft.fillScreen(C_BG);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextColor(C_YELLOW, C_BG);
+    tft.drawString(tr(T_UPDATING), SCR_W / 2, U(92), FONT_S);
+    drawInstallProgress(0);
+    if (!Update.begin(UPDATE_SIZE_UNKNOWN)) webUpdErr = Update.errorString();
+  } else if (up.status == UPLOAD_FILE_WRITE) {
+    if (webUpdErr) return;
+    // the first block holds the image header: 0xE9, then the chip at byte 12
+    // (0 = ESP32, 9 = ESP32-S3), so a file for the other board is refused
+    if (webUpdDone == 0) {
+      uint16_t chip = up.currentSize >= 14 ? up.buf[12] | up.buf[13] << 8 : 0xFFFF;
+      if (up.currentSize < 14 || up.buf[0] != 0xE9) webUpdErr = "That isn't a firmware file.";
+      else if (chip != CONFIG_IDF_FIRMWARE_CHIP_ID) webUpdErr = "That firmware is for a different board.";
+      if (webUpdErr) {
+        Update.abort();
+        return;
+      }
+    }
+    if (Update.write(up.buf, up.currentSize) != up.currentSize) {
+      webUpdErr = Update.errorString();
+      Update.abort();
+      return;
+    }
+    webUpdDone += up.currentSize;
+    drawInstallProgress(min(99, (int)(webUpdDone * 100 / 1500000)));  // size isn't known; a CYD image is ~1.5 MB
+  } else if (up.status == UPLOAD_FILE_END) {
+    if (!webUpdErr && !Update.end(true)) webUpdErr = Update.errorString();
+  } else if (up.status == UPLOAD_FILE_ABORTED) {
+    if (Update.isRunning()) Update.abort();
+    webUpdErr = "Upload stopped.";
+  }
+}
+
+void webUpdateRoutes() {
+  web.on("/update", HTTP_GET, [] {
+    String page = FPSTR(UPDATE_PAGE);
+    page.replace("%VER%", String(FW_VERSION));
+    page.replace("%VAR%", FW_VARIANT);
+    web.send(200, "text/html", page);
+  });
+  web.on(
+      "/update", HTTP_POST,
+      [] {
+        if (webUpdErr || !webUpdDone) {
+          Serial.printf("[update] upload refused: %s\n", webUpdErr ? webUpdErr : "no file");
+          web.send(400, "text/plain", webUpdErr ? webUpdErr : "No file received.");
+          showPage(page == PAGE_SAVER ? PAGE_HOME : page);
+          return;
+        }
+        startTrial();
+        drawInstallProgress(100);
+        web.send(200, "text/plain", "Installed. The screen is restarting.");
+        Serial.println("[update] installed from the browser, restarting");
+        delay(800);
+        ESP.restart();
+      },
+      webUpdateUpload);
 }
 
 void confirmNewFirmware() {
