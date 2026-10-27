@@ -80,6 +80,12 @@
 #define SPLASH_MS    2500     // start-up logo
 #define SHOW_LAMP_CHECK 1     // 1: all lamps and a needle sweep after the logo
 
+// WiFi update: the dash's own network's password, also the PlatformIO
+// upload's. Set in platformio.ini ([lomax] update_password) so both match.
+#ifndef UPDATE_PASSWORD
+#define UPDATE_PASSWORD "lomaxdash"
+#endif
+
 // CYD touch calibration (as the heater firmware; see README "Troubleshooting")
 #define TOUCH_X_MIN 200
 #define TOUCH_X_MAX 3700
