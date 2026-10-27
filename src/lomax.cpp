@@ -5,14 +5,21 @@
 // Speed from a GPS module, engine speed from the ignition coil's pulses, the
 // indicator, main beam and sidelight lamps, an odometer and trip, and an old
 // style clock set from the GPS. Tap the screen for the next page; hold it to
-// zero the trip. Pins and calibration are in lomax_config.h, wiring in LOMAX.md.
+// zero the trip. A finger on the screen while the badge shows starts a WiFi
+// update. Pins and calibration are in lomax_config.h, wiring in LOMAX.md.
 //
 //   pio run -e lomax -t upload           (CYD)
 //   pio run -e lomax_round -t upload     (round)
 //   pio run -e lomax7 -t upload          (7")
 #include <Arduino.h>
+// the web server before TFT_eSPI: TFT_eSPI asks for FS without its global
+// names (FS_NO_GLOBALS), which WebServer.h needs on Arduino core 3
+#include <WebServer.h>
+#include <WiFi.h>
+#include <ArduinoOTA.h>
 #include <Preferences.h>
 #include <TFT_eSPI.h>
+#include <Update.h>
 #if defined(BOARD_ROUND) || defined(BOARD_7INCH)
 #include <Wire.h>
 #else
@@ -373,6 +380,136 @@ void handleTouch() {
   }
 }
 
+// ================================================================ WiFi update
+// The dash opens its own WiFi network, LOMAX-xxxx, and takes a new firmware
+// from PlatformIO (ArduinoOTA: the *_wifi environments) or from the page at
+// 192.168.4.1. The screen shows how far it has got and restarts when done.
+// A tap gives up (and restarts), and so do 10 minutes with nothing sent.
+bool updating = false;
+WebServer *web = nullptr;
+uint32_t updateSince = 0;
+int webTotal = 0, shownPct = -1;
+
+const char UPDATE_PAGE[] = R"(<!doctype html><meta name=viewport content="width=device-width">
+<title>Lomax dash update</title>
+<body style="font-family:sans-serif;background:#111;color:#eee;max-width:32em;margin:2em auto;padding:0 1em">
+<h2>Lomax dash: new firmware</h2>
+<p>Choose <b>firmware.bin</b> from <code>.pio/build/&lt;board&gt;/</code> in the project
+(<code>lomax</code>, <code>lomax_round</code> or <code>lomax7</code>), then Install.
+The screen shows its progress and restarts when it's done.</p>
+<form method=POST action=/update enctype=multipart/form-data>
+<input type=file name=firmware accept=.bin required> <button>Install</button></form>)";
+
+const bool BIG_UI = SCR_W >= 800;
+
+// lines 0-6 down the middle of the screen
+int uiY(int line) { return SCR_H / 2 + (line - 3) * (BIG_UI ? 44 : 26); }
+
+void uiText(const char *str, int line, const uint8_t *font, uint16_t col) {
+  int h = BIG_UI ? 40 : 24;
+  screenFill(0, uiY(line) - h / 2, SCR_W, h, C_DASH);
+  tft.loadFont(font);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(col, C_DASH);
+  tft.drawString(str, SCR_W / 2, uiY(line));
+  tft.unloadFont();
+}
+
+// pct < 0: a problem (amber), otherwise the bar filled that far
+void updateStatus(const char *str, int pct) {
+  uiText(str, 5, BIG_UI ? LX_21 : LX_15, pct < 0 ? C_AMBER : C_FACE);
+  int w = BIG_UI ? 400 : 140, h = BIG_UI ? 14 : 8, x = (SCR_W - w) / 2, y = uiY(6) - h / 2;
+  tft.drawRect(x, y, w, h, rgb(120, 116, 108));
+  screenFill(x + 1, y + 1, w - 2, h - 2, C_DASH);
+  if (pct > 0) screenFill(x + 1, y + 1, (w - 2) * min(pct, 100) / 100, h - 2, C_GREEN);
+  Serial.printf("[update] %s\n", str);
+}
+
+void showProgress(int pct) {
+  if (pct == shownPct) return;
+  shownPct = pct;
+  char str[24];
+  snprintf(str, sizeof str, "Receiving %d%%", pct);
+  updateStatus(str, pct);
+}
+
+void startUpdateMode() {
+  updating = true;
+  updateSince = millis();
+  freePage();  // the dials' memory, for the WiFi
+  screenFill(0, 0, SCR_W, SCR_H, C_DASH);
+  backlight(BRIGHT_DAY);
+
+  char ap[16], line[40];
+  uint8_t mac[6];
+  WiFi.mode(WIFI_AP);
+  WiFi.softAPmacAddress(mac);
+  snprintf(ap, sizeof ap, "LOMAX-%02X%02X", mac[4], mac[5]);
+  WiFi.softAP(ap, UPDATE_PASSWORD);
+
+  const uint8_t *big = BIG_UI ? LX_30 : LX_21, *body = BIG_UI ? LX_21 : LX_15;
+  uiText("WIFI UPDATE", 0, big, C_FACE);
+  snprintf(line, sizeof line, "Join %s", ap);
+  uiText(line, 1, body, C_FACE);
+  snprintf(line, sizeof line, "Password %s", UPDATE_PASSWORD);
+  uiText(line, 2, body, C_FACE);
+  uiText("then upload, or open", 3, body, shade(C_FACE, 0.75f));
+  uiText("http://192.168.4.1", 4, body, C_FACE);
+  updateStatus("Waiting. Tap to cancel", 0);
+  Serial.printf("[update] network %s, password %s, http://192.168.4.1\n", ap, UPDATE_PASSWORD);
+
+  ArduinoOTA.setHostname("lomax");
+  ArduinoOTA.setPassword(UPDATE_PASSWORD);
+  ArduinoOTA.onStart([] { updateStatus("Receiving...", 0); });
+  ArduinoOTA.onProgress([](unsigned int done, unsigned int total) { showProgress(total ? done * 100ULL / total : 0); });
+  ArduinoOTA.onEnd([] { updateStatus("Done. Restarting", 100); });
+  ArduinoOTA.onError([](ota_error_t e) { updateStatus("Update failed", -1); });
+  ArduinoOTA.begin();  // restarts by itself once it's in
+
+  web = new WebServer(80);
+  web->on("/", HTTP_GET, [] { web->send(200, "text/html", UPDATE_PAGE); });
+  web->on(
+      "/update", HTTP_POST,
+      [] {  // after the upload
+        bool ok = !Update.hasError();
+        web->send(200, "text/plain", ok ? "Installed. The dash is restarting." : "The update failed; the old firmware stays.");
+        if (ok) {
+          updateStatus("Done. Restarting", 100);
+          delay(500);
+          ESP.restart();
+        }
+      },
+      [] {  // the file, in pieces
+        HTTPUpload &u = web->upload();
+        if (u.status == UPLOAD_FILE_START) {
+          webTotal = web->clientContentLength();
+          if (Update.begin(UPDATE_SIZE_UNKNOWN)) updateStatus("Receiving...", 0);
+          else updateStatus(Update.errorString(), -1);
+        } else if (u.status == UPLOAD_FILE_WRITE) {
+          if (Update.write(u.buf, u.currentSize) != u.currentSize) updateStatus(Update.errorString(), -1);
+          else if (webTotal > 0) showProgress(min(99, (int)(100LL * u.totalSize / webTotal)));
+        } else if (u.status == UPLOAD_FILE_END) {
+          if (!Update.end(true)) updateStatus(Update.errorString(), -1);
+        } else if (u.status == UPLOAD_FILE_ABORTED) {
+          Update.abort();
+          updateStatus("Upload stopped", -1);
+        }
+      });
+  web->begin();
+}
+
+void loopUpdateMode() {
+  ArduinoOTA.handle();
+  web->handleClient();
+  // a tap gives up, once the finger that started this has let go
+  static bool released = false;
+  int x, y;
+  bool down = touched(x, y);
+  if (!down) released = true;
+  bool busy = Update.isRunning() || shownPct > 0;
+  if (!busy && ((down && released) || millis() - updateSince > 10 * 60000UL)) ESP.restart();
+}
+
 // ================================================================ serial
 // "odo 12873.4" sets the odometer to the car's own; "trip 0" zeroes the trip.
 void handleSerial() {
@@ -386,6 +523,10 @@ void handleSerial() {
     }
     line[n] = 0;
     n = 0;
+    if (!strcmp(line, "update")) {
+      if (!updating) startUpdateMode();
+      continue;
+    }
     if (!strncmp(line, "odo ", 4)) st.odo = atof(line + 4);
     else if (!strncmp(line, "trip ", 5)) st.trip = atof(line + 5);
     else continue;
@@ -430,8 +571,13 @@ void setup() {
   beginTouch();
 #endif
 
-  // the logo fades in
+  // the logo fades in, with a hint at the bottom
   drawSplash();
+  tft.loadFont(LX_11);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(rgb(110, 106, 100), C_DASH);
+  tft.drawString("hold for WiFi update", SCR_W / 2, SCR_H - (SCR_W == SCR_H ? 34 : 14));
+  tft.unloadFont();
   for (int i = 0; i <= 255; i += 5) { backlight(i); delay(8); }
   blLevel = BRIGHT_DAY;
 
@@ -445,8 +591,18 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(TACHO_PIN), tachoIsr, FALLING);
   beginLamps();
 
-  uint32_t t0 = millis();
-  while (millis() - t0 < SPLASH_MS) readGps();
+  // a finger held on the badge for a second: WiFi update instead of the dash
+  uint32_t t0 = millis(), heldSince = 0;
+  while (millis() - t0 < SPLASH_MS) {
+    readGps();
+    int x, y;
+    if (!touched(x, y)) heldSince = 0;
+    else if (!heldSince) heldSince = millis();
+    else if (millis() - heldSince > 1000) {
+      startUpdateMode();
+      return;
+    }
+  }
 
   uint8_t p = prefs.getUChar("page", 255);
   showPage(hasPage(p) ? (Page)p : nextPage((Page)(PAGE_COUNT - 1)), st);
@@ -459,6 +615,10 @@ void setup() {
 }
 
 void loop() {
+  if (updating) {
+    loopUpdateMode();
+    return;
+  }
   static uint32_t lastLamps = 0, lastRpm = 0, lastFrame = 0;
   uint32_t now = millis();
   readGps();

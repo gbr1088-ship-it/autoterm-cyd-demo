@@ -160,6 +160,37 @@ that does pulse. If yours has one, it can feed the same circuit: set
 touch the ignition, a Hall sensor and a magnet on the crank pulley also work
 (1 pulse per rev, same input).
 
+## WiFi updates
+Once the dash is in the car, new versions go in over WiFi from the laptop,
+with no USB cable:
+
+1. Switch on with a finger held on the screen while the LOMAX badge shows
+   (it says "hold for WiFi update"). After a second the dash shows
+   **WIFI UPDATE** instead of the dials, with its own network's name
+   (`LOMAX-xxxx`) and password.
+2. Join that network from the laptop. It has no internet, which is expected.
+3. Send the new version, either:
+   - from PlatformIO, the `_wifi` twin of the usual environment:
+     ```
+     pio run -e lomax7_wifi -t upload        (or lomax_wifi, lomax_round_wifi)
+     ```
+     On Windows, allow Python through the firewall if it asks; the upload
+     needs the dash to call the laptop back.
+   - or in a browser at **http://192.168.4.1**: choose `firmware.bin` from
+     `.pio/build/lomax7/` (build it first with `pio run -e lomax7`) and press
+     Install.
+4. The screen shows the progress, then restarts on the new version. Rejoin
+   your usual WiFi on the laptop.
+
+A tap on the screen gives up and restarts the dash as it was, and so do ten
+minutes with nothing sent. If an upload breaks off, the old version stays.
+`update` typed in the serial monitor starts the same thing.
+
+The password is `lomaxdash`. Change `update_password` in the `[lomax]`
+section of `platformio.ini`, flash once over USB, and both the network and
+the upload use the new one. The network is only there while the update
+screen shows.
+
 ## Faster GPS (optional)
 GPS modules send their speed once a second by default. The needle eases
 between readings, but it lags a moment behind the car. A u-blox module can do
