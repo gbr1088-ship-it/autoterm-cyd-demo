@@ -51,6 +51,13 @@ The app shows the cabin gauge and heater state, and it can start and stop the he
 - The app lives in `web/app.html`. After editing it, run `python tools/web2header.py` to rebuild `src/webapp.h`. Opened straight from disk, the page runs a demo with a simulated heater.
 - **Demo to send to people:** `demo/adventure-van-life-demo.html` is the whole app in one file (also rebuilt by `web2header.py`). It opens in any browser and runs with a simulated heater. To share it as a link, upload it to a static host, e.g. drag it onto https://app.netlify.com/drop.
 
+### Updating the firmware from a browser
+With the phone app on, a phone or laptop on the `AVL-xxxx` network can install new firmware without USB or internet:
+1. Build it (`pio run -e avl`, or the screen's own version) and copy `.pio/build/<version>/firmware.bin` to the phone or laptop. Use `firmware.bin`, not the merged USB file.
+2. Open **http://192.168.4.1/update**, choose the file and tap **Install**. The screen shows a progress bar and restarts when it's done.
+
+Turn the heater and windlass off first, or the update is refused. A file for the other kind of board (CYD vs 7") is refused too. As with the downloaded updates, a new version that keeps crashing in its first 30 s is swapped back for the previous one.
+
 ## Adventure Van Life branding
 The splash screen, the header on every page but the heater's, the phone app and the `avl` screensaver use the Adventure Van Life logo. The heater page's header says AUTOTERM in plain text. The artwork is `assets/avl_logo_original.jpg`. `tools/avl_logo.py` makes every copy from it: the orange tile for the splash and the phone, the lettering in orange for the dark header bar, and the screensaver. To change the logo, replace that file, run the script, then run the three commands it prints.
 
