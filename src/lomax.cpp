@@ -330,7 +330,7 @@ void onBoxRecv(const uint8_t *mac, const uint8_t *data, int len) { queueBox(mac,
 void beginBox() {
 #if ENGINE_LINK
   boxKnown = boxSaved = prefs.isKey("box") && prefs.getBytes("box", boxMac, 6) == 6;
-  boxDemo = prefs.getBool("demo", false);
+  boxDemo = prefs.getBool("demo", ENGINE_DEMO);
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
   esp_wifi_set_channel(ENGINE_CHANNEL, WIFI_SECOND_CHAN_NONE);
