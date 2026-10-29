@@ -94,7 +94,9 @@ struct Dial {
   bool big;
   TFT_eSprite *face;
   float shown;          // needle value, easing towards the reading (-1: not yet)
+  float speed;          // how fast it's moving, per second
   float drawnDeg;       // the needle's angle on screen
+  int16_t box[4];       // where that needle is, x0 y0 x1 y1 in the dial (x0 > x1: nowhere yet)
   int shownSec;         // clock: the second on screen
   float odoShown, tripShown;
   int8_t lampOn[LAMP_COUNT];  // lamps drawn in the face (round screen): what's showing
@@ -380,7 +382,10 @@ void buildFace(Dial &d) {
   if (d.kind == DIAL_CLOCK) drawClockFace(d);
   else drawScale(d);
   d.shown = -1;
+  d.speed = 0;
   d.drawnDeg = 999;
+  d.box[0] = 1;
+  d.box[2] = 0;
   d.shownSec = -1;
   d.odoShown = d.tripShown = -1;
 }
@@ -428,6 +433,19 @@ void drawNeedle(Dial &d, float deg, int oy) {
   spot(d.c - cap * 0.25f, d.c - cap * 0.25f, cap * 0.45f, rgb(110, 106, 100), oy);
 }
 
+// the part of the dial a needle at deg covers: the needle, its shadow and the cap
+void needleBox(const Dial &d, float deg, int16_t *b) {
+  float tail = d.Rf * 0.2f, tip = d.Rf * 0.9f;
+  float m = ((d.big ? 2.6f : 2.0f) + (d.big ? 2.5f : 2)) * sk(d) + 3, cap = d.Rf * 0.1f + 3;
+  float ax = px(d, -tail, deg), ay = py(d, -tail, deg), bx = px(d, tip, deg), by = py(d, tip, deg);
+  float x0 = fminf(fminf(ax, bx) - m, d.c - cap), x1 = fmaxf(fmaxf(ax, bx) + m, d.c + cap);
+  float y0 = fminf(fminf(ay, by) - m, d.c - cap), y1 = fmaxf(fmaxf(ay, by) + m, d.c + cap);
+  b[0] = (int16_t)fmaxf(0, floorf(x0));
+  b[1] = (int16_t)fmaxf(0, floorf(y0));
+  b[2] = (int16_t)fminf(d.size - 1, ceilf(x1));
+  b[3] = (int16_t)fminf(d.size - 1, ceilf(y1));
+}
+
 // a Breguet hand: a slim shaft, an open "moon" near the end, a fine point
 void drawBreguet(Dial &d, float deg, float len, float moonAt, float moonR, float w, uint16_t col, int oy) {
   float c = d.c;
@@ -460,20 +478,26 @@ void drawHands(Dial &d, const DashState &st, int oy) {
   spot(d.c, d.c, (d.big ? 4 : 2.2f) * sk(d), C_BRASS, oy);
 }
 
-void renderDial(Dial &d, const DashState &st) {
+// The whole dial, or only the part from (bx0, by0) to (bx1, by1): where the
+// needle was and is now, so a moving needle costs a fraction of the dial.
+void renderDial(Dial &d, const DashState &st, int bx0 = 0, int by0 = 0, int bx1 = 9999, int by1 = 9999) {
   const uint16_t *src = (const uint16_t *)d.face->getPointer();
   uint16_t *dst = (uint16_t *)strip->getPointer();
-  for (int oy = 0; oy < d.size; oy += STRIP_H) {
+  bx1 = bx1 < d.size - 1 ? bx1 : d.size - 1;
+  by1 = by1 < d.size - 1 ? by1 : d.size - 1;
+  for (int oy = by0 / STRIP_H * STRIP_H; oy <= by1; oy += STRIP_H) {
     int h = d.size - oy < STRIP_H ? d.size - oy : STRIP_H;
-    for (int r = 0; r < h; r++) memcpy(dst + r * stripW, src + (oy + r) * d.size, d.size * 2);
+    for (int r = 0; r < h; r++) memcpy(dst + r * stripW + bx0, src + (oy + r) * d.size + bx0, (bx1 - bx0 + 1) * 2);
     if (d.kind == DIAL_CLOCK) drawHands(d, st, oy);
     else drawNeedle(d, sweepAngle(d.shown, d.kind == DIAL_SPEEDO ? SPEEDO_MAX : TACHO_MAX * 1000), oy);
     // only the round part, so dials can sit closer than their squares allow
     for (int r = 0; r < h; r++) {
+      if (oy + r < by0 || oy + r > by1) continue;
       float dy = oy + r - d.c, half = (d.R + 1) * (d.R + 1) - dy * dy;
       if (half <= 0) continue;
       half = sqrtf(half);
-      int x0 = (int)fmaxf(0, floorf(d.c - half)), x1 = (int)fminf(d.size - 1, ceilf(d.c + half));
+      int x0 = (int)fmaxf(bx0, floorf(d.c - half)), x1 = (int)fminf(bx1, ceilf(d.c + half));
+      if (x0 > x1) continue;
       screenPush(*strip, x0, r, x1 - x0 + 1, 1, d.x + x0, d.y + oy + r);
     }
   }
@@ -716,14 +740,37 @@ void updateDash(const DashState &st, float dt, bool snap = false) {
     info |= updateFaceLamps(d, st, false);
     float target = d.kind == DIAL_SPEEDO ? st.mph : st.rpm;
     float vmax = d.kind == DIAL_SPEEDO ? SPEEDO_MAX : TACHO_MAX * 1000;
-    // the needle eases in: GPS speed comes once a second (or 5 times)
-    float k = d.kind == DIAL_SPEEDO ? 5.0f : 10.0f;
-    d.shown = (snap || d.shown < 0) ? target : d.shown + (target - d.shown) * fminf(1, dt * k);
-    float deg = sweepAngle(d.shown, vmax);
-    if (info || fabsf(deg - d.drawnDeg) > 0.12f) {
-      d.drawnDeg = deg;
-      renderDial(d, st);
+    // The needle moves like a damped meter movement: it gathers speed and
+    // settles on the reading without overshooting, rather than leaping at
+    // each new reading (GPS speed comes 1 or 5 times a second, the revs 10)
+    // and creeping after it. w sets how quickly: settled in about 4.7 / w s.
+    if (snap || d.shown < 0) {
+      d.shown = target;
+      d.speed = 0;
+    } else {
+      float w = d.kind == DIAL_SPEEDO ? 9.0f : 16.0f;
+      for (float left = fminf(dt, 0.1f); left > 0; left -= 0.004f) {  // small steps keep it steady
+        float h = fminf(left, 0.004f);
+        d.speed += (w * w * (target - d.shown) - 2 * w * d.speed) * h;
+        d.shown += d.speed * h;
+      }
+      if (fabsf(target - d.shown) < vmax * 1e-4f && fabsf(d.speed) < vmax * 1e-3f) {
+        d.shown = target;
+        d.speed = 0;
+      }
     }
+    float deg = sweepAngle(d.shown, vmax);
+    int16_t box[4];
+    needleBox(d, deg, box);
+    if (info || d.box[0] > d.box[2]) {
+      renderDial(d, st);
+    } else if (fabsf(deg - d.drawnDeg) > 0.12f) {  // only where the needle was and is now
+      renderDial(d, st, min(box[0], d.box[0]), min(box[1], d.box[1]), max(box[2], d.box[2]), max(box[3], d.box[3]));
+    } else {
+      continue;
+    }
+    d.drawnDeg = deg;
+    memcpy(d.box, box, sizeof box);
   }
 }
 

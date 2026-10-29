@@ -41,6 +41,9 @@ void screenPush(TFT_eSprite &s, int sx, int sy, int w, int h, int x, int y) {
 TFT_eSPI tft;
 
 void screenPush(TFT_eSprite &s, int sx, int sy, int w, int h, int x, int y) { s.pushSprite(x, y, sx, sy, w, h); }
+// these screens are drawn straight away, there's no copy to keep out of the way
+void frameBegin() {}
+void frameEnd() {}
 #endif
 void screenFill(int x, int y, int w, int h, uint16_t colour) { tft.fillRect(x, y, w, h, colour); }
 
@@ -548,7 +551,9 @@ void lampCheck() {
     float k = sinf((float)(now - start) / T * 3.1416f);
     t.mph = SPEEDO_MAX * k;
     t.rpm = TACHO_MAX * 1000 * k;
+    frameBegin();
     updateDash(t, 0, true);
+    frameEnd();
     delay(5);
   }
 }
@@ -583,6 +588,7 @@ void setup() {
 
   setenv("TZ", LOCAL_TZ, 1);
   tzset();
+  gpsSerial.setRxBufferSize(1024);  // room for the sentences that come in while a frame is drawn
   gpsSerial.begin(GPS_BAUD, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
 #if GPS_TX_PIN >= 0
   setupGps();
@@ -611,7 +617,9 @@ void setup() {
   lampCheck();
 #endif
   updateClock();
+  frameBegin();
   updateDash(st, 0, true);
+  frameEnd();
 }
 
 void loop() {
@@ -630,7 +638,9 @@ void loop() {
     float dt = (now - lastFrame) / 1000.0f;
     lastFrame = now;
     updateClock();
+    frameBegin();
     updateDash(st, dt);
+    frameEnd();
     fadeBacklight(dt);
   }
 }
