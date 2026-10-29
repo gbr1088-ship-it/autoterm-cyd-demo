@@ -131,29 +131,75 @@ class ScreenSprite : public TFT_eSprite {
     mark(x, y, w, h);
   }
 
+  // Several separate areas are kept, so two needles at opposite sides of
+  // the screen don't make the whole screen between them go to the panel.
   void mark(int32_t x, int32_t y, int32_t w, int32_t h) {
     if (w <= 0 || h <= 0) return;
-    int32_t x1 = min<int32_t>(x + w - 1, UI_W - 1), y1 = min<int32_t>(y + h - 1, UI_H - 1);
-    x = max<int32_t>(x, 0); y = max<int32_t>(y, 0);
-    if (x > x1 || y > y1) return;
+    Rect r = {max<int32_t>(x, 0), max<int32_t>(y, 0), min<int32_t>(x + w - 1, UI_W - 1), min<int32_t>(y + h - 1, UI_H - 1)};
+    if (r.x0 > r.x1 || r.y0 > r.y1) return;
     portENTER_CRITICAL(&lock);
-    if (dx0 > dx1) { dx0 = x; dy0 = y; dx1 = x1; dy1 = y1; }
-    else { dx0 = min(dx0, x); dy0 = min(dy0, y); dx1 = max(dx1, x1); dy1 = max(dy1, y1); }
+    addRect(r);
     portEXIT_CRITICAL(&lock);
   }
 
-  // Copy the changed area to the panel, turned a quarter turn: a few screen
+  // Copy the changed areas to the panel.
+  void flush(esp_lcd_panel_handle_t panel) {
+    Rect todo[MAX_RECTS];
+    portENTER_CRITICAL(&lock);
+    int n = nDirty;
+    for (int i = 0; i < n; i++) todo[i] = dirty[i];
+    nDirty = 0;
+    portEXIT_CRITICAL(&lock);
+    if (!created()) return;
+    for (int i = 0; i < n; i++) flushRect(panel, todo[i].x0, todo[i].y0, todo[i].x1, todo[i].y1);
+  }
+
+ private:
+  struct Rect { int32_t x0, y0, x1, y1; };
+  static const int MAX_RECTS = 6;
+  static const int NEAR = 8;  // areas closer than this become one
+
+  static bool near(const Rect &a, const Rect &b) {
+    return a.x0 <= b.x1 + NEAR && b.x0 <= a.x1 + NEAR && a.y0 <= b.y1 + NEAR && b.y0 <= a.y1 + NEAR;
+  }
+  static void grow(Rect &a, const Rect &b) {
+    a.x0 = min(a.x0, b.x0); a.y0 = min(a.y0, b.y0); a.x1 = max(a.x1, b.x1); a.y1 = max(a.y1, b.y1);
+  }
+  static int32_t area(const Rect &a) { return (a.x1 - a.x0 + 1) * (a.y1 - a.y0 + 1); }
+
+  void addRect(const Rect &r) {
+    int into = -1;
+    for (int i = 0; i < nDirty && into < 0; i++)
+      if (near(dirty[i], r)) into = i;
+    if (into < 0 && nDirty < MAX_RECTS) { dirty[nDirty++] = r; return; }
+    if (into < 0) {  // no room: join the one that grows least
+      int32_t best = INT32_MAX;
+      for (int i = 0; i < nDirty; i++) {
+        Rect u = dirty[i];
+        grow(u, r);
+        if (area(u) - area(dirty[i]) < best) { best = area(u) - area(dirty[i]); into = i; }
+      }
+    }
+    grow(dirty[into], r);
+    // the bigger area may reach others now
+    for (int j = 0; j < nDirty;) {
+      if (j != into && near(dirty[into], dirty[j])) {
+        grow(dirty[into], dirty[j]);
+        dirty[j] = dirty[--nDirty];
+        if (into == nDirty) into = j;
+        j = 0;
+      } else {
+        j++;
+      }
+    }
+  }
+
+  // Copy the one changed area to the panel, turned a quarter turn: a few screen
   // columns at a time, each becoming a panel row.
   //   P7_PORTRAIT 1: panel x = screen y,           panel y = 479 - screen x
   //   P7_PORTRAIT 2: panel x = 799 - screen y,     panel y = screen x
   // Landscape: a few rows at a time, as they are (0) or turned round (3).
-  void flush(esp_lcd_panel_handle_t panel) {
-    portENTER_CRITICAL(&lock);
-    int32_t x0 = dx0, y0 = dy0, x1 = dx1, y1 = dy1;
-    dx0 = 1; dx1 = 0;  // empty
-    portEXIT_CRITICAL(&lock);
-    if (x0 > x1 || !created()) return;
-
+  void flushRect(esp_lcd_panel_handle_t panel, int32_t x0, int32_t y0, int32_t x1, int32_t y1) {
 #if P7_LANDSCAPE
     {
     int w = x1 - x0 + 1;
@@ -202,21 +248,40 @@ class ScreenSprite : public TFT_eSprite {
     }
   }
 
- private:
   static const int ROWS = 16;  // screen columns (panel rows) converted per pass
   uint16_t buf[ROWS * P7_W];
   portMUX_TYPE lock = portMUX_INITIALIZER_UNLOCKED;
-  int32_t dx0 = 0, dy0 = 0, dx1 = UI_W - 1, dy1 = UI_H - 1;  // everything, at the start
+  Rect dirty[MAX_RECTS] = {{0, 0, UI_W - 1, UI_H - 1}};  // everything, at the start
+  int nDirty = 1;
 };
 
 TFT_eSPI tftUnused;  // TFT_eSPI wants a parent display for its sprites; never started
 ScreenSprite tft(&tftUnused);
 esp_lcd_panel_handle_t panel7 = nullptr;
 
+// Drawing a frame between frameBegin() and frameEnd() keeps the copy to the
+// panel out of it, so the panel never shows a half-drawn needle, and the copy
+// starts as soon as the frame is done. Drawing outside them still gets copied
+// within 16 ms.
+SemaphoreHandle_t frameLock = nullptr;
+TaskHandle_t flushTask = nullptr;
+
+void frameBegin() {
+  if (frameLock) xSemaphoreTake(frameLock, portMAX_DELAY);
+}
+
+void frameEnd() {
+  if (!frameLock) return;
+  xSemaphoreGive(frameLock);
+  xTaskNotifyGive(flushTask);
+}
+
 void panelFlushTask(void *) {
   for (;;) {
+    ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(16));
+    xSemaphoreTake(frameLock, portMAX_DELAY);
     tft.flush(panel7);
-    vTaskDelay(pdMS_TO_TICKS(16));
+    xSemaphoreGive(frameLock);
   }
 }
 
@@ -379,7 +444,8 @@ void display7Begin() {
   esp_lcd_panel_reset(panel7);
   esp_lcd_panel_init(panel7);
   // WiFi runs on core 0 too, at a higher priority, so drawing never holds it up
-  xTaskCreatePinnedToCore(panelFlushTask, "panel", 4096, nullptr, 1, nullptr, 0);
+  frameLock = xSemaphoreCreateMutex();
+  xTaskCreatePinnedToCore(panelFlushTask, "panel", 4096, nullptr, 1, &flushTask, 0);
   Serial.printf("[display] %dx%d panel started, portrait %d, gamma %.2f\n", P7_W, P7_H, P7_PORTRAIT, (float)P7_GAMMA);
 
   touch7Begin();
