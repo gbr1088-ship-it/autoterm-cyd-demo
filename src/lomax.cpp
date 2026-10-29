@@ -342,7 +342,8 @@ void beginBox() {
 
 // Made-up readings for trying the dash without a box: a minute's drive,
 // round and round. Away from idle, up through the gears to 60, a cruise, the
-// left indicator to pull in, slowing to a stop, then the hazards on. The
+// left indicator to pull in, slowing to a stop, then the hazards on, with
+// the headlights, a flash of main beam and the fogs along the way. The
 // temperatures wander on their own.
 float demoMph = 0;
 
@@ -367,7 +368,11 @@ void demoBox(EnginePkt &p) {
   p.chtL10 = (int16_t)(10 * (150 + mph * 0.9f) + 150 * sinf(t * 0.21f));
   p.chtR10 = (int16_t)(10 * (145 + mph * 0.85f) + 120 * sinf(t * 0.17f + 1));
   bool flash = (millis() % 667) < 333;
-  if (u >= 36 && u < 41 && flash) p.lights = EL_IND_L;
+  // headlights on for the drive, a flash of main beam, the fogs near the end
+  if (u >= 6 && u < 53) p.lights |= EL_SIDE | EL_DIP;
+  if (u >= 28 && u < 32) p.lights = (p.lights & ~EL_DIP) | EL_BEAM;
+  if (u >= 41 && u < 53) p.lights |= EL_FOG_F | EL_FOG_R;
+  if (u >= 36 && u < 41 && flash) p.lights |= EL_IND_L;
   if (u >= 53) p.lights = EL_HAZARD | (flash ? EL_IND_L | EL_IND_R : 0);
 }
 
@@ -426,6 +431,9 @@ void updateBox() {
   st.beam = wired.beam || (live && (p.lights & EL_BEAM));
   st.side = wired.side || (live && (p.lights & EL_SIDE));
   st.hazard = live && (p.lights & EL_HAZARD);
+  st.dip = live && (p.lights & EL_DIP);
+  st.fogF = live && (p.lights & EL_FOG_F);
+  st.fogR = live && (p.lights & EL_FOG_R);
   bool running = st.rpm > ENGINE_RUNNING_RPM;
   st.oilLow = live && ((p.lights & EL_OIL_LOW) || (running && !isnan(st.oilPsi) && st.oilPsi < OIL_PSI_LOW));
 }
@@ -707,7 +715,7 @@ void lampCheck() {
   DashState t = st;
   t.indL = t.indR = t.beam = t.side = true;
   t.gpsOk = false;
-  t.oilLow = t.hazard = true;
+  t.oilLow = t.hazard = t.dip = t.fogF = t.fogR = true;
   const uint32_t T = LAMP_CHECK_MS;
   uint32_t start = millis();
   for (uint32_t now = start; now - start < T; now = millis()) {

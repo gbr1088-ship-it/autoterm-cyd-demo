@@ -11,7 +11,7 @@
 #pragma once
 #include <stdint.h>
 
-const uint32_t ENGINE_MAGIC = 0x31424C45;  // "ELB1"; change if the packet changes
+const uint32_t ENGINE_MAGIC = 0x32424C45;  // "ELB2"; change if the packet changes
 const uint8_t ENGINE_CHANNEL = 1;          // WiFi channel; the dash's update network uses it too
 const uint32_t ENGINE_EVERY_MS = 100;
 const uint32_t ENGINE_LOST_MS = 1000;      // the dash shows "--" after this long without a packet
@@ -35,21 +35,24 @@ enum EngineLights : uint16_t {
   EL_IND_R = 1 << 1,
   EL_HAZARD = 1 << 2,   // hazard switch on
   EL_SIDE = 1 << 3,     // sidelights on
-  EL_BEAM = 1 << 4,     // main beam switch (read only, the box doesn't switch it)
+  EL_BEAM = 1 << 4,     // main beam lit
   EL_BRAKE = 1 << 5,    // brake pedal switch
   EL_DRL = 1 << 6,      // daytime running lights on
   EL_IGN = 1 << 7,      // ignition on
   EL_OIL_LOW = 1 << 8,  // the engine's own oil pressure switch says low
+  EL_DIP = 1 << 9,      // dipped beam lit
+  EL_FOG_F = 1 << 10,   // front fogs lit
+  EL_FOG_R = 1 << 11,   // rear fogs lit
 };
 
 struct __attribute__((packed)) EnginePkt {
   uint32_t magic;
   uint8_t seq;          // counts up, so a repeat can be spotted
-  uint8_t spareIn;      // the spare inputs, 1 = closed
+  uint8_t spareIn;      // the PCF8574's inputs (P0, P1 the fog switches), 1 = closed
   uint16_t valid;       // EngineValid
   uint16_t lights;      // EngineLights
-  uint8_t outputs;      // DO1..DO8 as they are now
-  uint8_t inputs;       // DI1..DI8, 1 = 12 V there
+  uint16_t outputs;     // DO1..DO11 as they are now
+  uint16_t inputs;      // DI1..DI9, 1 = 12 V there
   int16_t oilPsi10;     // tenths of a psi
   int16_t oilTemp10;    // tenths of a degree C
   int16_t chtL10, chtR10;

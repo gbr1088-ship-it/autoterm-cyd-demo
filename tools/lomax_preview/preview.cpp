@@ -83,6 +83,7 @@ int main() {
   // the engine box: hazards on, oil pressure gone, a hot head; then no box
   DashState hot = st;
   hot.indL = hot.indR = hot.hazard = true;
+  hot.side = hot.dip = hot.fogF = hot.fogR = true;
   hot.oilPsi = 4;
   hot.oilLow = true;
   hot.oilTemp = 128;

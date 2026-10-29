@@ -8,8 +8,9 @@
 //   an ADS1115, a K-type thermocouple under each spark plug through two
 //   MAX31856, the revs from the coil, an optional wheel speed sensor, the
 //   supply voltage, and the oil pressure warning switch.
-//   Outputs drive relay coils: sidelights, daytime running lights, left and
-//   right indicators (with hazards), brake lights, three spares.
+//   Outputs drive relay coils: sidelights, daytime running lights, dipped
+//   and main beam, front and rear fogs, left and right indicators (with
+//   hazards), brake lights, two spares.
 //
 // The lights work on their own: nothing here waits for the dash, so a dead
 // or missing screen never takes a lamp out. Safety, whatever else happens:
@@ -20,8 +21,8 @@
 //    BRAKE_VIA_BOX is 1; the box then only reads the switch
 //
 // The box is on a permanent feed so the hazards and parking lights work
-// with the key out. With the ignition, hazards and sidelights all off it
-// sleeps (well under 1 mA) and wakes when any of them comes on.
+// with the key out. With the ignition, hazards, sidelights and headlights
+// all off it sleeps (well under 1 mA) and wakes when any of them comes on.
 
 #include <Arduino.h>
 #include <Preferences.h>
@@ -57,6 +58,10 @@ const float ENGINE_RUNNING_RPM = 300;
 // 1: the DRLs go out while the indicators flash (needed if a DRL sits
 // within 40 mm of an indicator)
 #define DRL_OFF_WHEN_INDICATING 0
+// Headlights: 0 = dipped beam goes out while main beam is on, 1 = both on
+#define MAIN_KEEPS_DIP 0
+// The fogs follow the law: the front fogs only with the sidelights or
+// headlights on, the rear fogs only with dipped beam or the front fogs.
 
 // Oil pressure transducer: 0.5 V at 0, 4.5 V at full scale, through a
 // 10k / 20k divider (x 2/3) so the ADS1115 never sees more than 3.3 V.
@@ -81,31 +86,40 @@ const float TACHO_MAX_RPM = 7000;
 const float WHEEL_PULSES_PER_MILE = 4000;
 
 // ================================================================ pins
-// ESP32-S3-DevKitC-1. Inputs come through optocouplers (LOW = 12 V there);
-// outputs drive a ULN2803 or MOSFET module (HIGH = relay on).
+// ESP32-S3-DevKitC-1, its log on the chip's own USB (so GPIO43/44 are free).
+// Inputs come through optocouplers (LOW = 12 V there); outputs drive two
+// ULN2803s or a MOSFET module (HIGH = relay on).
 const int PIN_SDA = 8, PIN_SCL = 9;                     // ADS1115, PCF8574
 const int PIN_SCK = 12, PIN_MOSI = 11, PIN_MISO = 13;   // MAX31856s
 const int PIN_CS_CHT_L = 10, PIN_CS_CHT_R = 14;
-const int PIN_TACHO = 15, PIN_WHEEL = 16;
-// DI1..DI8. The wake-up inputs (ignition, hazards, sidelights) must be
-// GPIO 0-21.
-enum { DI_IND_L, DI_IND_R, DI_HAZARD, DI_BRAKE, DI_SIDE, DI_BEAM, DI_OIL_SW, DI_IGN };
-const int DI_PINS[8] = {4, 5, 6, 7, 1, 2, 17, 18};
-// DO1..DO8. GPIO 3 and 46 are read at power-up, which a ULN2803's own
-// pull-downs don't upset; nothing else may pull them.
-enum { DO_SIDE, DO_DRL, DO_IND_L, DO_IND_R, DO_BRAKE, DO_SPARE1, DO_SPARE2, DO_SPARE3 };
-const int DO_PINS[8] = {21, 39, 40, 41, 42, 47, 3, 46};
+const int PIN_TACHO = 15, PIN_WHEEL = 44;
+// DI1..DI9. The wake-up inputs (ignition, hazards, sidelights, headlights)
+// must be GPIO 0-21.
+enum { DI_IND_L, DI_IND_R, DI_HAZARD, DI_BRAKE, DI_SIDE, DI_HEAD, DI_BEAM, DI_OIL_SW, DI_IGN, DI_COUNT };
+const int DI_PINS[DI_COUNT] = {4, 5, 6, 7, 1, 16, 2, 17, 18};
+// DO1..DO11. The headlights and indicators are on plain pins. GPIO 45, 46
+// and 3 are read at power-up, which the ULN2803s' own pull-downs don't
+// upset (45 must be low then). The board's RGB LED shares GPIO 38 or 48
+// (depending on its version), so it may flicker with the DRLs or front fogs.
+enum { DO_SIDE, DO_DRL, DO_IND_L, DO_IND_R, DO_BRAKE, DO_DIP, DO_MAIN, DO_FOG_F, DO_FOG_R, DO_SPARE1, DO_SPARE2, DO_COUNT };
+const int DO_PINS[DO_COUNT] = {21, 38, 39, 40, 41, 42, 47, 48, 45, 46, 3};
+// The outputs "out N on" may switch: the spares, and DO5 while the brake
+// lights are wired straight
+const uint16_t SPARE_OUTS = (1 << DO_SPARE1) | (1 << DO_SPARE2) | (BRAKE_VIA_BOX ? 0 : 1 << DO_BRAKE);
 const uint8_t ADS_ADDR = 0x48;     // ADDR to GND
-const uint8_t SPARE_PCF = 0x20;    // the spare inputs' PCF8574, A0-A2 to GND
+// PCF8574 (A0-A2 to GND): P0 front fog switch, P1 rear fog switch, P2-P7 spare.
+// The fogs aren't needed to drive safely, so they can go through it.
+const uint8_t SPARE_PCF = 0x20;
+const uint8_t PCF_FOG_F = 1 << 0, PCF_FOG_R = 1 << 1;
 const uint32_t SLEEP_AFTER_MS = 30000;  // everything off this long: sleep
 
 // ================================================================ state
 Preferences prefs;
 const uint8_t BROADCAST[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-uint8_t inputs = 0;          // debounced, bit n = DI(n+1) on
-uint8_t outputs = 0;
-uint8_t spareOut = 0;        // DO6..DO8 asked for over serial, bits 5-7
-uint8_t spareIn = 0;
+uint16_t inputs = 0;         // debounced, bit n = DI(n+1) on
+uint16_t outputs = 0;
+uint16_t spareOut = 0;       // spare outputs asked for over serial (SPARE_OUTS)
+uint8_t spareIn = 0;         // the PCF8574's inputs, 1 = closed
 bool spareInOk = false;
 float oilPsi = NAN, oilTemp = NAN, chtL = NAN, chtR = NAN, rpm = 0, wheelMph = 0, battV = NAN, spareV = NAN;
 bool adsOk = false;
@@ -118,8 +132,8 @@ bool in(int n) { return inputs & (1 << n); }
 // ================================================================ inputs
 // every 5 ms; a change has to be there for three readings in a row
 void readInputs() {
-  static uint8_t differ[8];
-  for (int i = 0; i < 8; i++) {
+  static uint8_t differ[DI_COUNT];
+  for (int i = 0; i < DI_COUNT; i++) {
     bool on = digitalRead(DI_PINS[i]) == LOW;
     if (on == in(i)) differ[i] = 0;
     else if (++differ[i] >= 3) {
@@ -132,11 +146,12 @@ void readInputs() {
 void readSpareInputs() {
   spareInOk = Wire.requestFrom(SPARE_PCF, (uint8_t)1) == 1;
   if (spareInOk) spareIn = ~Wire.read();  // optocouplers pull low: 1 = closed
+  else spareIn = 0;                       // no chip: the fogs go out
 }
 
 // ================================================================ outputs
-void writeOutputs(uint8_t bits) {
-  for (int i = 0; i < 8; i++) digitalWrite(DO_PINS[i], (bits >> i) & 1);
+void writeOutputs(uint16_t bits) {
+  for (int i = 0; i < DO_COUNT; i++) digitalWrite(DO_PINS[i], (bits >> i) & 1);
   outputs = bits;
 }
 
@@ -154,17 +169,29 @@ void updateLights() {
   }
   bool lit = flashing && (now - flashStart) % FLASH_PERIOD_MS < FLASH_PERIOD_MS / 2;
 
+  // headlights: the light switch's headlamp position, the stalk choosing
+  // dipped or main; the sidelights stay on with them
+  bool head = in(DI_HEAD);
+  bool main = head && in(DI_BEAM);
+  bool dip = head && (!main || MAIN_KEEPS_DIP);
+  bool side = in(DI_SIDE) || head;
+  bool fogF = (spareIn & PCF_FOG_F) && side;
+  bool fogR = (spareIn & PCF_FOG_R) && (head || fogF);
+
   bool running = !DRL_NEEDS_ENGINE || rpm > ENGINE_RUNNING_RPM;
-  bool drl = in(DI_IGN) && running && !in(DI_SIDE);
+  bool drl = in(DI_IGN) && running && !side;
   if (DRL_OFF_WHEN_INDICATING && flashing) drl = false;
 
-  uint8_t want = spareOut & 0xE0;
-  if (in(DI_SIDE)) want |= 1 << DO_SIDE;
+  uint16_t want = spareOut & SPARE_OUTS;
+  if (side) want |= 1 << DO_SIDE;
+  if (dip) want |= 1 << DO_DIP;
+  if (main) want |= 1 << DO_MAIN;
+  if (fogF) want |= 1 << DO_FOG_F;
+  if (fogR) want |= 1 << DO_FOG_R;
   if (drl) want |= 1 << DO_DRL;
   if (lit && left) want |= 1 << DO_IND_L;
   if (lit && right) want |= 1 << DO_IND_R;
   if (BRAKE_VIA_BOX && in(DI_BRAKE)) want |= 1 << DO_BRAKE;
-  if (!BRAKE_VIA_BOX) want |= spareOut & (1 << DO_BRAKE);  // a spare then
   if (want != outputs) writeOutputs(want);
 }
 
@@ -354,7 +381,10 @@ void sendState() {
   if (outputs & (1 << DO_IND_R)) l |= EL_IND_R;
   if (in(DI_HAZARD)) l |= EL_HAZARD;
   if (outputs & (1 << DO_SIDE)) l |= EL_SIDE;
-  if (in(DI_BEAM)) l |= EL_BEAM;
+  if (outputs & (1 << DO_MAIN)) l |= EL_BEAM;
+  if (outputs & (1 << DO_DIP)) l |= EL_DIP;
+  if (outputs & (1 << DO_FOG_F)) l |= EL_FOG_F;
+  if (outputs & (1 << DO_FOG_R)) l |= EL_FOG_R;
   if (in(DI_BRAKE)) l |= EL_BRAKE;
   if (outputs & (1 << DO_DRL)) l |= EL_DRL;
   if (in(DI_IGN)) l |= EL_IGN;
@@ -384,7 +414,8 @@ void radioBegin() {
 // them off. The ignition, hazard or sidelight input coming on wakes it.
 void sleepIfQuiet() {
   uint32_t now = millis();
-  bool busy = in(DI_IGN) || in(DI_HAZARD) || in(DI_SIDE) || (BRAKE_VIA_BOX && in(DI_BRAKE)) || (spareOut & 0xF0);
+  bool busy = in(DI_IGN) || in(DI_HAZARD) || in(DI_SIDE) || in(DI_HEAD) || (BRAKE_VIA_BOX && in(DI_BRAKE)) ||
+              (spareOut & SPARE_OUTS);
   if (busy || !quietSince) { quietSince = busy ? 0 : now; return; }
   if (now - quietSince < SLEEP_AFTER_MS) return;
   Serial.println("[box] all off: sleeping");
@@ -392,7 +423,8 @@ void sleepIfQuiet() {
   writeOutputs(0);
   esp_now_deinit();
   WiFi.mode(WIFI_OFF);
-  uint64_t mask = (1ULL << DI_PINS[DI_IGN]) | (1ULL << DI_PINS[DI_HAZARD]) | (1ULL << DI_PINS[DI_SIDE]);
+  uint64_t mask = (1ULL << DI_PINS[DI_IGN]) | (1ULL << DI_PINS[DI_HAZARD]) | (1ULL << DI_PINS[DI_SIDE]) |
+                  (1ULL << DI_PINS[DI_HEAD]);
   if (BRAKE_VIA_BOX) mask |= 1ULL << DI_PINS[DI_BRAKE];
   // the pins' own pull-ups don't last into sleep: the RTC's do
   esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
@@ -406,12 +438,12 @@ void sleepIfQuiet() {
 }
 
 // ================================================================ serial
-// "out 6 on" / "out 6 off" switch a spare output (6-8, or 5 when the brake
-// lights are wired straight); "status" prints everything.
+// "out 10 on" / "out 10 off" switch a spare output (10 or 11, or 5 while the
+// brake lights are wired straight); "status" prints everything.
 void printStatus() {
   Serial.printf("[box] oil %.1f psi %.1f C  heads %.1f / %.1f C  %.0f rpm  %.1f mph  supply %.2f V  spare %.2f V\n",
                 oilPsi, oilTemp, chtL, chtR, rpm, wheelMph, battV, spareV);
-  Serial.printf("[box] inputs %02X  outputs %02X  spare inputs %02X%s  ADC %s\n", inputs, outputs, spareIn,
+  Serial.printf("[box] inputs %03X  outputs %03X  PCF8574 inputs %02X%s  ADC %s\n", inputs, outputs, spareIn,
                 spareInOk ? "" : " (no PCF8574)", adsOk ? "OK" : "NOT FOUND");
 }
 
@@ -429,8 +461,8 @@ void handleSerial() {
     int ch;
     char state[4];
     if (!strcmp(line, "status")) printStatus();
-    else if (sscanf(line, "out %d %3s", &ch, state) == 2 && (ch >= 6 || (ch == 5 && !BRAKE_VIA_BOX)) && ch <= 8) {
-      uint8_t bit = 1 << (ch - 1);
+    else if (sscanf(line, "out %d %3s", &ch, state) == 2 && ch >= 1 && ch <= DO_COUNT && (SPARE_OUTS >> (ch - 1) & 1)) {
+      uint16_t bit = 1 << (ch - 1);
       spareOut = !strcmp(state, "on") ? spareOut | bit : spareOut & ~bit;
       Serial.printf("[box] DO%d %s\n", ch, spareOut & bit ? "on" : "off");
     }
@@ -470,7 +502,7 @@ void setup() {
 
 void loop() {
   static uint32_t lastInputs = 0, lastSend = 0, lastSpare = 0;
-  static uint16_t sentLights = 0;
+  static uint32_t sentLights = 0;
   uint32_t now = millis();
   esp_task_wdt_reset();
   if (now - lastInputs >= 5) { lastInputs = now; readInputs(); }
@@ -480,7 +512,7 @@ void loop() {
   pollCht();
   if (now - lastSpare >= 50) { lastSpare = now; readSpareInputs(); }
   // straight away when a lamp changes, so the dash's arrows flash in step
-  uint16_t lightsNow = outputs | (inputs << 8);
+  uint32_t lightsNow = outputs | (uint32_t)inputs << 16 | (uint32_t)spareIn << 28;
   if (now - lastSend >= ENGINE_EVERY_MS || lightsNow != sentLights) {
     sendState();
     lastSend = now;

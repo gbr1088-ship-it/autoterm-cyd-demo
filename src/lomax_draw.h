@@ -86,10 +86,14 @@ struct DashState {
   float oilPsi = NAN, oilTemp = NAN, chtL = NAN, chtR = NAN;  // psi, degrees C
   bool oilLow = false;    // the oil lamp: the pressure switch, or a low reading while running
   bool hazard = false;    // the hazard switch is on
+  bool dip = false, fogF = false, fogR = false;  // dipped beam, front and rear fogs lit
 };
 
-enum LampKind : uint8_t { LAMP_LEFT, LAMP_RIGHT, LAMP_BEAM, LAMP_SIDE, LAMP_GPS, LAMP_OIL, LAMP_HAZARD, LAMP_COUNT };
-// the oil and hazard lamps come from the engine box, so only where it's used
+enum LampKind : uint8_t {
+  LAMP_LEFT, LAMP_RIGHT, LAMP_BEAM, LAMP_SIDE, LAMP_GPS,
+  LAMP_OIL, LAMP_HAZARD, LAMP_DIP, LAMP_FOG_F, LAMP_FOG_R, LAMP_COUNT
+};
+// the lamps after GPS come from the engine box, so only where it's used
 const int SHOWN_LAMPS = ENGINE_LINK ? LAMP_COUNT : LAMP_GPS + 1;
 enum Page : uint8_t { PAGE_DUAL, PAGE_SPEEDO, PAGE_TACHO, PAGE_CLOCK, PAGE_COUNT };
 enum DialKind : uint8_t { DIAL_SPEEDO, DIAL_TACHO, DIAL_CLOCK };
@@ -577,6 +581,20 @@ bool inLamp(LampKind k, float x, float y) {
       }
       return false;
     }
+    case LAMP_DIP:
+    case LAMP_FOG_F:
+    case LAMP_FOG_R: {
+      // dipped beam: the headlamp's rays slant down; front fog: the same
+      // with a wavy line through them; rear fog: lens to the right, level
+      // rays, the wavy line
+      if (k == LAMP_FOG_R) x = -x;
+      if (x >= 0 && x * x + y * y <= 10.0f * 10.0f) return true;
+      float slant = k == LAMP_FOG_R ? 0 : 0.32f;
+      for (int i = -2; i <= 2; i++)
+        if (fabsf(y - i * 4.2f + (x + 3) * slant) <= 1.1f && x >= -14 && x <= -3) return true;
+      if (k == LAMP_DIP) return false;
+      return fabsf(x - (-8.5f + 1.6f * sinf(y * 0.55f))) <= 0.9f && fabsf(y) <= 11.5f;
+    }
     case LAMP_OIL: {
       // the oil can: body, neck and cap, a spout with a drip, a handle
       if (x >= -8 && x <= 8 && y >= -2 && y <= 8) return true;
@@ -633,7 +651,8 @@ void drawFaceLamp(Dial &d, LampKind k, bool on, float fx, float fy) {
 
 void drawLamp(LampKind k, bool on, int x, int y) {
   uint16_t col = !on ? C_LAMP_OFF
-                     : k == LAMP_BEAM ? C_BLUE : k == LAMP_GPS ? C_AMBER : k >= LAMP_OIL ? C_WARN : C_GREEN;
+                     : k == LAMP_BEAM ? C_BLUE : (k == LAMP_GPS || k == LAMP_FOG_R) ? C_AMBER
+                     : (k == LAMP_OIL || k == LAMP_HAZARD) ? C_WARN : C_GREEN;
   if (k == LAMP_GPS) {  // lit while there's no fix, so the speedo can't be trusted
     lampSpr->fillSprite(C_DASH);
     lampSpr->loadFont(LAMP_SCALE > 1 ? LX_21 : LX_15);
@@ -665,7 +684,7 @@ struct PageLayout {
   uint8_t n;                           // dials; 0: no such page on this screen
   Dial dials[3];
   bool lampsInFace;                    // in dials[0]'s face, not around it
-  LampPos lamp[LAMP_COUNT];            // left, right, beam, side, GPS, oil, hazard
+  LampPos lamp[LAMP_COUNT];            // in LampKind's order
   FaceLampPos faceLamp[LAMP_COUNT];
 };
 
@@ -681,11 +700,12 @@ PageLayout layouts[PAGE_COUNT] = {
 };
 #elif defined(BOARD_7INCH)
 // one page: a big speedo and rev counter, the clock between them at the top,
-// the indicators and lamps in the top corners, the engine gauges under them,
+// the indicators and lamps across the top (left: arrow, sidelights, dipped,
+// front fogs; right: rear fogs, main beam, arrow), the engine gauges under them,
 // the oil and hazard lamps between the dials, the GPS lamp low in the middle
 PageLayout layouts[PAGE_COUNT] = {
     {3, {{DIAL_SPEEDO, 14, 126, 340, true}, {DIAL_TACHO, 446, 126, 340, true}, {DIAL_CLOCK, 300, 4, 200, true}},
-     false, {{18, 16}, {728, 16}, {650, 16}, {96, 16}, {373, 420}, {373, 222}, {373, 282}}},
+     false, {{18, 16}, {728, 16}, {650, 16}, {96, 16}, {373, 420}, {373, 222}, {373, 282}, {174, 16}, {244, 16}, {572, 16}}},
     {0}, {0}, {0},
 };
 #else
@@ -729,6 +749,9 @@ void lampStates(const DashState &st, bool *on) {
   on[LAMP_GPS] = !st.gpsOk;  // lit while there's no fix, so the speedo can't be trusted
   on[LAMP_OIL] = st.oilLow;
   on[LAMP_HAZARD] = st.hazard && (st.indL || st.indR);  // flashes with the indicators
+  on[LAMP_DIP] = st.dip;
+  on[LAMP_FOG_F] = st.fogF;
+  on[LAMP_FOG_R] = st.fogR;
 }
 
 // lamps in a dial's face; true if any changed (the dial needs redrawing)

@@ -56,8 +56,9 @@ any of three boards:
 
 **Engine box** (7" only): oil pressure, oil temperature and both head
 temperatures as bar gauges in the top corners, a red oil lamp and a hazard
-lamp between the dials, all from the engine and lights box, which also
-switches the indicators, hazards, sidelights and daytime running lights. See
+lamp between the dials, and dipped beam and fog tell-tales along the top, all
+from the engine and lights box, which also switches the indicators, hazards,
+headlights, fogs, sidelights and daytime running lights. See
 [ENGINEBOX.md](ENGINEBOX.md). Without a box the gauges show "--".
 
 **Tap** the screen for the next page: side by side → speedo → rev counter →
