@@ -54,12 +54,19 @@ any of three boards:
   needles sweep to full scale and back, like a car's own bulb check.
 - **Night**: with the sidelights on, the backlight dims (`BRIGHT_NIGHT`).
 
+**Engine box** (7" only): oil pressure, oil temperature and both head
+temperatures as bar gauges in the top corners, a red oil lamp and a hazard
+lamp between the dials, all from the engine and lights box, which also
+switches the indicators, hazards, sidelights and daytime running lights. See
+[ENGINEBOX.md](ENGINEBOX.md). Without a box the gauges show "--".
+
 **Tap** the screen for the next page: side by side → speedo → rev counter →
 clock (the round screen has no side-by-side page). It remembers the page.
 **Hold 2 s** to zero the trip.
 
 Over USB (115200 baud), `odo 12873.4` sets the odometer to the car's own
-reading, and `trip 0` zeroes the trip.
+reading, and `trip 0` zeroes the trip. `demo` shows made-up engine readings
+while no engine box is heard, and `unpair` forgets the engine box.
 
 ## Parts
 - ESP32-2432S028 (CYD) 2.8" board, or the round Waveshare ESP32-S3-Touch-LCD-1.28-B
