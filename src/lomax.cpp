@@ -4,7 +4,8 @@
 //
 // Speed from a GPS module, engine speed from the ignition coil's pulses, the
 // indicator, main beam and sidelight lamps, an odometer and trip, and an old
-// style clock set from the GPS. Tap the screen for the next page; hold it to
+// style clock set from the GPS. On the 7", oil pressure and temperature, head
+// temperatures and the oil and hazard lamps from the engine box (ENGINEBOX.md). Tap the screen for the next page; hold it to
 // zero the trip. A finger on the screen while the badge shows starts a WiFi
 // update. Pins and calibration are in lomax_config.h, wiring in LOMAX.md.
 //
@@ -17,6 +18,8 @@
 #include <WebServer.h>
 #include <WiFi.h>
 #include <ArduinoOTA.h>
+#include <esp_now.h>
+#include <esp_wifi.h>
 #include <Preferences.h>
 #include <TFT_eSPI.h>
 #include <Update.h>
@@ -28,6 +31,7 @@
 #include <sys/time.h>
 #include <time.h>
 #include "lomax_config.h"
+#include "enginelink.h"
 
 #if defined(BOARD_7INCH)
 #include "display7.h"  // tft: a full-screen sprite, copied to the panel in the background
@@ -134,7 +138,9 @@ struct Lamp {
   bool *state;
   uint8_t differ;  // readings in a row that differ from the state
 };
-Lamp lamps[] = {{IND_L_PIN, &st.indL, 0}, {IND_R_PIN, &st.indR, 0}, {BEAM_PIN, &st.beam, 0}, {SIDE_PIN, &st.side, 0}};
+// the lamps wired to the dash itself; the engine box's are added to these
+struct { bool indL, indR, beam, side; } wired;
+Lamp lamps[] = {{IND_L_PIN, &wired.indL, 0}, {IND_R_PIN, &wired.indR, 0}, {BEAM_PIN, &wired.beam, 0}, {SIDE_PIN, &wired.side, 0}};
 
 #if defined(LAMP_PCF8574)
 // The lamps come through a PCF8574 on the I2C bus: the "pins" are its
@@ -168,7 +174,7 @@ void readLamps() {
     if (lit == *l.state) l.differ = 0;
     else if (++l.differ >= 2) { *l.state = lit; l.differ = 0; }
   }
-  if (IND_R_PIN < 0) st.indR = st.indL;  // one indicator lamp: both arrows
+  if (IND_R_PIN < 0) wired.indR = wired.indL;  // one indicator lamp: both arrows
 }
 
 // ================================================================ GPS
@@ -178,6 +184,7 @@ int nmeaLen = 0;
 uint32_t lastFixMs = 0, lastSpeedMs = 0;
 bool clockSet = false;
 float savedOdo = 0;
+uint32_t boxHeardAt = 0;  // the engine box's last packet; 0: not since power-up
 
 int hex(char c) { return c <= '9' ? c - '0' : (c | 32) - 'a' + 10; }
 
@@ -231,6 +238,7 @@ void handleRmc(const char *s) {
     st.trip += miles;
   }
   lastSpeedMs = now;
+  if (SPEED_SOURCE == 2 && boxHeardAt) return;  // the wheel sensor has the speedo and odometer
   st.mph = mph;
   // save every tenth of a mile, and on stopping (the ignition may go off next)
   if (st.odo - savedOdo >= 0.1f || (mph == 0 && st.odo != savedOdo)) saveDistance();
@@ -266,7 +274,7 @@ void readGps() {
     }
   }
   st.gpsOk = lastFixMs && millis() - lastFixMs < GPS_TIMEOUT_MS;
-  if (!st.gpsOk) st.mph = 0;
+  if (!st.gpsOk && !(SPEED_SOURCE && boxHeardAt)) st.mph = 0;
 }
 
 #if GPS_TX_PIN >= 0
@@ -291,6 +299,144 @@ void setupGps() {
   ubx(0x06, 0x08, rate, 6);
 }
 #endif
+
+// ================================================================ engine box
+// Its packets come in on the radio task and are copied out here; the loop
+// takes the latest. The first box heard is kept, see enginelink.h.
+EnginePkt boxPkt;
+volatile bool boxNew = false;
+uint8_t boxMac[6];
+bool boxKnown = false;
+bool boxSaved = false;     // its address is in prefs
+bool boxDemo = false;      // "demo" on the serial port: made-up readings
+portMUX_TYPE boxMux = portMUX_INITIALIZER_UNLOCKED;
+
+void queueBox(const uint8_t *mac, const uint8_t *data, int len) {
+  if (len != sizeof(EnginePkt) || ((const EnginePkt *)data)->magic != ENGINE_MAGIC) return;
+  if (boxKnown && memcmp(mac, boxMac, 6)) return;  // someone else's
+  portENTER_CRITICAL(&boxMux);
+  if (!boxKnown) { memcpy(boxMac, mac, 6); boxKnown = true; }
+  memcpy(&boxPkt, data, len);
+  boxNew = true;
+  portEXIT_CRITICAL(&boxMux);
+}
+
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+void onBoxRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) { queueBox(info->src_addr, data, len); }
+#else
+void onBoxRecv(const uint8_t *mac, const uint8_t *data, int len) { queueBox(mac, data, len); }
+#endif
+
+void beginBox() {
+#if ENGINE_LINK
+  boxKnown = boxSaved = prefs.isKey("box") && prefs.getBytes("box", boxMac, 6) == 6;
+  boxDemo = prefs.getBool("demo", ENGINE_DEMO);
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+  esp_wifi_set_channel(ENGINE_CHANNEL, WIFI_SECOND_CHAN_NONE);
+  if (esp_now_init() != ESP_OK) { Serial.println("[box] ESP-NOW failed to start"); return; }
+  esp_now_register_recv_cb(onBoxRecv);
+  Serial.printf("[box] listening on channel %d, %s\n", ENGINE_CHANNEL, boxKnown ? "paired" : "will pair with the first box heard");
+#endif
+}
+
+// Made-up readings for trying the dash without a box: a minute's drive,
+// round and round. Away from idle, up through the gears to 60, a cruise, the
+// left indicator to pull in, slowing to a stop, then the hazards on, with
+// the headlights, a flash of main beam and the fogs along the way. The
+// temperatures wander on their own.
+float demoMph = 0;
+
+float easeIn(float a, float b, float u) {  // a to b as u goes 0 to 1, gently at both ends
+  u = fmaxf(0, fminf(1, u));
+  return a + (b - a) * (3 * u * u - 2 * u * u * u);
+}
+
+void demoBox(EnginePkt &p) {
+  float t = millis() / 1000.0f, u = fmodf(t, 60);
+  float mph = u < 6 ? 0 : u < 26 ? easeIn(0, 60, (u - 6) / 20) : u < 40 ? 60 + 2.5f * sinf(u * 0.9f)
+              : u < 52 ? easeIn(60, 0, (u - 40) / 12) : 0;
+  // mph per 1000 rpm in each gear, and the speeds it changes up at
+  float ratio = mph < 12 ? 5 : mph < 24 ? 9 : mph < 38 ? 13.5f : 17;
+  float rpm = fmaxf(850 + 40 * sinf(t * 3), mph / ratio * 1000);
+  demoMph = mph;
+  p = {};
+  p.valid = EV_OIL_PSI | EV_OIL_TEMP | EV_CHT_L | EV_CHT_R | EV_RPM;
+  p.rpm = (uint16_t)rpm;
+  p.oilPsi10 = (int16_t)(10 * (14 + rpm / 110));
+  p.oilTemp10 = (int16_t)(1000 + 250 * sinf(t * 0.11f));
+  p.chtL10 = (int16_t)(10 * (150 + mph * 0.9f) + 150 * sinf(t * 0.21f));
+  p.chtR10 = (int16_t)(10 * (145 + mph * 0.85f) + 120 * sinf(t * 0.17f + 1));
+  bool flash = (millis() % 667) < 333;
+  // headlights on for the drive, a flash of main beam, the fogs near the end
+  if (u >= 6 && u < 53) p.lights |= EL_SIDE | EL_DIP;
+  if (u >= 28 && u < 32) p.lights = (p.lights & ~EL_DIP) | EL_BEAM;
+  if (u >= 41 && u < 53) p.lights |= EL_FOG_F | EL_FOG_R;
+  if (u >= 36 && u < 41 && flash) p.lights |= EL_IND_L;
+  if (u >= 53) p.lights = EL_HAZARD | (flash ? EL_IND_L | EL_IND_R : 0);
+}
+
+// every frame: the box's readings and lamps into the dash's state
+void updateBox() {
+  EnginePkt p;
+  bool live;
+  if (boxNew) {
+    portENTER_CRITICAL(&boxMux);
+    p = boxPkt;
+    boxNew = false;
+    portEXIT_CRITICAL(&boxMux);
+    if (!boxHeardAt) Serial.printf("[box] heard %02X:%02X:%02X:%02X:%02X:%02X\n", boxMac[0], boxMac[1], boxMac[2], boxMac[3], boxMac[4], boxMac[5]);
+    boxHeardAt = millis();
+    boxPkt = p;
+    if (!boxSaved && boxKnown) { prefs.putBytes("box", boxMac, 6); boxSaved = true; }
+  }
+  live = boxHeardAt && millis() - boxHeardAt < ENGINE_LOST_MS;
+  if (live) p = boxPkt;
+  else if (boxDemo) {
+    demoBox(p);
+    live = true;
+    st.mph = demoMph;  // the speedo too, but no miles on the odometer
+    st.gpsOk = true;
+  } else {
+    p = {};
+  }
+
+  auto get = [&](int16_t v, uint16_t bit) { return live && (p.valid & bit) ? v / 10.0f : NAN; };
+  st.oilPsi = get(p.oilPsi10, EV_OIL_PSI);
+  st.oilTemp = get(p.oilTemp10, EV_OIL_TEMP);
+  st.chtL = get(p.chtL10, EV_CHT_L);
+  st.chtR = get(p.chtR10, EV_CHT_R);
+  if (live && (p.valid & EV_RPM)) st.rpm = p.rpm;  // the box has the coil, not the dash
+
+  // speed from the wheel sensor, if chosen (SPEED_SOURCE); the odometer
+  // then counts what the speedo shows
+  bool wheel = live && (p.valid & EV_WHEEL) && (SPEED_SOURCE == 2 || (SPEED_SOURCE == 1 && !st.gpsOk));
+  static uint32_t wheelAt = 0;
+  if (wheel) {
+    uint32_t now = millis();
+    st.mph = p.wheelMph10 / 10.0f;
+    if (wheelAt && now - wheelAt < 2000) {
+      float miles = st.mph * (now - wheelAt) / 3.6e6f;
+      st.odo += miles;
+      st.trip += miles;
+    }
+    wheelAt = now;
+    if (st.odo - savedOdo >= 0.1f || (st.mph == 0 && st.odo != savedOdo)) saveDistance();
+  } else {
+    wheelAt = 0;
+  }
+
+  st.indL = wired.indL || (live && (p.lights & EL_IND_L));
+  st.indR = wired.indR || (live && (p.lights & EL_IND_R));
+  st.beam = wired.beam || (live && (p.lights & EL_BEAM));
+  st.side = wired.side || (live && (p.lights & EL_SIDE));
+  st.hazard = live && (p.lights & EL_HAZARD);
+  st.dip = live && (p.lights & EL_DIP);
+  st.fogF = live && (p.lights & EL_FOG_F);
+  st.fogR = live && (p.lights & EL_FOG_R);
+  bool running = st.rpm > ENGINE_RUNNING_RPM;
+  st.oilLow = live && ((p.lights & EL_OIL_LOW) || (running && !isnan(st.oilPsi) && st.oilPsi < OIL_PSI_LOW));
+}
 
 // ================================================================ clock
 void updateClock() {
@@ -445,10 +591,11 @@ void startUpdateMode() {
 
   char ap[16], line[40];
   uint8_t mac[6];
+  if (ENGINE_LINK) esp_now_deinit();
   WiFi.mode(WIFI_AP);
   WiFi.softAPmacAddress(mac);
   snprintf(ap, sizeof ap, "LOMAX-%02X%02X", mac[4], mac[5]);
-  WiFi.softAP(ap, UPDATE_PASSWORD);
+  WiFi.softAP(ap, UPDATE_PASSWORD, ENGINE_CHANNEL);
 
   const uint8_t *big = BIG_UI ? LX_30 : LX_21, *body = BIG_UI ? LX_21 : LX_15;
   uiText("WIFI UPDATE", 0, big, C_FACE);
@@ -515,6 +662,9 @@ void loopUpdateMode() {
 
 // ================================================================ serial
 // "odo 12873.4" sets the odometer to the car's own; "trip 0" zeroes the trip.
+// "unpair" forgets the engine box (the next one heard is taken); "demo"
+// turns a made-up drive on or off (all the needles and gauges) while no box
+// is heard.
 void handleSerial() {
   static char line[32];
   static int n = 0;
@@ -528,6 +678,19 @@ void handleSerial() {
     n = 0;
     if (!strcmp(line, "update")) {
       if (!updating) startUpdateMode();
+      continue;
+    }
+    if (!strcmp(line, "unpair")) {
+      prefs.remove("box");
+      boxKnown = boxSaved = false;
+      boxHeardAt = 0;
+      Serial.println("[box] forgotten: the next box heard is taken");
+      continue;
+    }
+    if (!strcmp(line, "demo")) {
+      boxDemo = !boxDemo;
+      prefs.putBool("demo", boxDemo);
+      Serial.printf("[box] demo readings %s\n", boxDemo ? "on" : "off");
       continue;
     }
     if (!strncmp(line, "odo ", 4)) st.odo = atof(line + 4);
@@ -552,6 +715,7 @@ void lampCheck() {
   DashState t = st;
   t.indL = t.indR = t.beam = t.side = true;
   t.gpsOk = false;
+  t.oilLow = t.hazard = t.dip = t.fogF = t.fogR = true;
   const uint32_t T = LAMP_CHECK_MS;
   uint32_t start = millis();
   for (uint32_t now = start; now - start < T; now = millis()) {
@@ -559,6 +723,11 @@ void lampCheck() {
     float k = 0.5f - 0.5f * cosf((float)(now - start) / T * 2 * 3.1416f);
     t.mph = SPEEDO_MAX * k;
     t.rpm = TACHO_MAX * 1000 * k;
+    if (ENGINE_LINK) {
+      t.oilPsi = OIL_PSI_MAX * k;
+      t.oilTemp = OIL_TEMP_MIN + (OIL_TEMP_MAX - OIL_TEMP_MIN) * k;
+      t.chtL = t.chtR = CHT_MAX * k;
+    }
     frameBegin();
     updateDash(t, 0, true);
     frameEnd();
@@ -604,6 +773,7 @@ void setup() {
   pinMode(TACHO_PIN, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(TACHO_PIN), tachoIsr, FALLING);
   beginLamps();
+  beginBox();
 
   // a finger held on the badge for a second: WiFi update instead of the dash
   uint32_t t0 = millis(), heldSince = 0;
@@ -641,6 +811,7 @@ void loop() {
   handleSerial();
   if (now - lastLamps >= 10) { lastLamps = now; readLamps(); }
   if (now - lastRpm >= 100) { lastRpm = now; updateRpm(); }
+  updateBox();  // after the dash's own tacho: the box's revs win when it has them
   handleTouch();
   if (now - lastFrame >= 20) {  // up to 50 frames a second, only what moved is redrawn
     float dt = (now - lastFrame) / 1000.0f;

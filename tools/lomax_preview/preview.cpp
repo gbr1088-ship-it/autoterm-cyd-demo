@@ -59,6 +59,10 @@ int main() {
   st.ss = 22;
   st.odo = 12873.4f;
   st.trip = 86.7f;
+  st.oilPsi = 42;
+  st.oilTemp = 96;
+  st.chtL = 182;
+  st.chtR = 176;
   for (int p = 0; p < PAGE_COUNT; p++) {
     if (!hasPage(p)) continue;
     showPage((Page)p, st);
@@ -75,5 +79,22 @@ int main() {
   showPage(nextPage((Page)(PAGE_COUNT - 1)), cold);
   updateDash(cold, 0, true);
   save("nogps");
+
+  // the engine box: hazards on, oil pressure gone, a hot head; then no box
+  DashState hot = st;
+  hot.indL = hot.indR = hot.hazard = true;
+  hot.side = hot.dip = hot.fogF = hot.fogR = true;
+  hot.oilPsi = 4;
+  hot.oilLow = true;
+  hot.oilTemp = 128;
+  hot.chtL = 262;
+  showPage(nextPage((Page)(PAGE_COUNT - 1)), hot);
+  updateDash(hot, 0, true);
+  save("warnings");
+  DashState nobox = st;
+  nobox.oilPsi = nobox.oilTemp = nobox.chtL = nobox.chtR = NAN;
+  showPage(nextPage((Page)(PAGE_COUNT - 1)), nobox);
+  updateDash(nobox, 0, true);
+  save("nobox");
   return 0;
 }

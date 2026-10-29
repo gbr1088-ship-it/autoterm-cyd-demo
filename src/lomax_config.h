@@ -73,8 +73,37 @@
 #define TACHO_MAX 7           // x1000 rpm at full scale
 #define TACHO_RED_FROM 5.5f   // x1000 rpm where the red band starts
 
+// ---------------------------------------------------------------- engine box
+// The engine and lights box (enginebox.cpp, ENGINEBOX.md) sends oil
+// pressure and temperature, head temperatures, revs and the lamps over
+// ESP-NOW. Only the 7" has room for its gauges.
+#if defined(BOARD_7INCH)
+#define ENGINE_LINK 1
+#else
+#define ENGINE_LINK 0
+#endif
+// Gauge scales and warnings. Check these against your engine's own figures.
+#define OIL_PSI_MAX   80      // oil pressure gauge full scale
+#define OIL_PSI_LOW   10      // below this with the engine running: oil lamp
+#define OIL_TEMP_MIN  40      // oil temperature gauge, degrees C
+#define OIL_TEMP_MAX  150
+#define OIL_TEMP_WARN 120     // amber from here
+#define OIL_TEMP_HIGH 135     // red from here
+#define CHT_MAX       300     // head temperature gauges (under the plugs), degrees C
+#define CHT_WARN      220
+#define CHT_HIGH      250
+#define ENGINE_RUNNING_RPM 300  // the oil lamp only judges pressure above this
+// Road speed: 0 = GPS, 1 = GPS, the box's wheel sensor while there's no fix,
+// 2 = the wheel sensor always (the odometer counts whichever is shown)
+#define SPEED_SOURCE 0
+// 1: a made-up drive (needles, gauges, indicators) until "demo" on the serial
+// port turns it off, for trying the dash without a box; a real box always wins
+#ifndef ENGINE_DEMO
+#define ENGINE_DEMO 0
+#endif
+
 // ---------------------------------------------------------------- screen
-#define BRIGHT_DAY   255      // backlight 0-255
+#define BRIGHT_DAY  255      // backlight 0-255
 #define BRIGHT_NIGHT 70       // with the sidelights on
 #define LONG_PRESS_MS 2000    // hold this long to reset the trip
 #define SPLASH_MS    2500     // start-up logo
