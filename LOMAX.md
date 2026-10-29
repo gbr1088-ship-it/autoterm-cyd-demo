@@ -65,8 +65,8 @@ clock (the round screen has no side-by-side page). It remembers the page.
 **Hold 2 s** to zero the trip.
 
 Over USB (115200 baud), `odo 12873.4` sets the odometer to the car's own
-reading, and `trip 0` zeroes the trip. `demo` shows made-up engine readings
-while no engine box is heard, and `unpair` forgets the engine box.
+reading, and `trip 0` zeroes the trip. `demo` runs a made-up drive (every needle
+and gauge) while no engine box is heard, and `unpair` forgets the engine box.
 
 ## Parts
 - ESP32-2432S028 (CYD) 2.8" board, or the round Waveshare ESP32-S3-Touch-LCD-1.28-B

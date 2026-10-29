@@ -170,9 +170,12 @@ so another car's box never moves your needles. Type `unpair` on the dash's
 USB serial port to let it take a different box.
 
 ## Trying it out
-- On the dash's serial port, `demo` turns on made-up engine readings (and a
-  burst of hazards every 20 s) for trying the gauges without a box. `demo`
-  again turns them off. A real box always wins.
+- On the dash's serial port, `demo` turns on a made-up drive for trying the
+  dash without a box: a minute round and round of pulling away through the
+  gears, a cruise at 60, the left indicator, a stop and the hazards, with the
+  engine gauges following. `demo` again turns it off. A real box always wins,
+  and the demo puts no miles on the odometer. A build with `-D ENGINE_DEMO=1`
+  starts with it on.
 - On the box's serial port, `status` prints every reading and input, and
   `out 6 on` / `out 6 off` switch a spare output (6-8, or 5 while the brake
   lights are wired straight).

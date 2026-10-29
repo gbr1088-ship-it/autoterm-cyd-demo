@@ -96,8 +96,8 @@
 // Road speed: 0 = GPS, 1 = GPS, the box's wheel sensor while there's no fix,
 // 2 = the wheel sensor always (the odometer counts whichever is shown)
 #define SPEED_SOURCE 0
-// 1: made-up engine readings until "demo" on the serial port turns them off
-// (for trying the gauges without a box; a real box always wins)
+// 1: a made-up drive (needles, gauges, indicators) until "demo" on the serial
+// port turns it off, for trying the dash without a box; a real box always wins
 #ifndef ENGINE_DEMO
 #define ENGINE_DEMO 0
 #endif

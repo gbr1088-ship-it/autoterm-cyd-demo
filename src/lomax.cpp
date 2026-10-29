@@ -340,16 +340,35 @@ void beginBox() {
 #endif
 }
 
-// made-up readings that wander, for trying the gauges without a box
+// Made-up readings for trying the dash without a box: a minute's drive,
+// round and round. Away from idle, up through the gears to 60, a cruise, the
+// left indicator to pull in, slowing to a stop, then the hazards on. The
+// temperatures wander on their own.
+float demoMph = 0;
+
+float easeIn(float a, float b, float u) {  // a to b as u goes 0 to 1, gently at both ends
+  u = fmaxf(0, fminf(1, u));
+  return a + (b - a) * (3 * u * u - 2 * u * u * u);
+}
+
 void demoBox(EnginePkt &p) {
-  float t = millis() / 1000.0f;
+  float t = millis() / 1000.0f, u = fmodf(t, 60);
+  float mph = u < 6 ? 0 : u < 26 ? easeIn(0, 60, (u - 6) / 20) : u < 40 ? 60 + 2.5f * sinf(u * 0.9f)
+              : u < 52 ? easeIn(60, 0, (u - 40) / 12) : 0;
+  // mph per 1000 rpm in each gear, and the speeds it changes up at
+  float ratio = mph < 12 ? 5 : mph < 24 ? 9 : mph < 38 ? 13.5f : 17;
+  float rpm = fmaxf(850 + 40 * sinf(t * 3), mph / ratio * 1000);
+  demoMph = mph;
   p = {};
-  p.valid = EV_OIL_PSI | EV_OIL_TEMP | EV_CHT_L | EV_CHT_R;
-  p.oilPsi10 = (int16_t)(420 + 300 * sinf(t * 0.5f));
-  p.oilTemp10 = (int16_t)(1000 + 300 * sinf(t * 0.13f));
-  p.chtL10 = (int16_t)(1900 + 700 * sinf(t * 0.21f));
-  p.chtR10 = (int16_t)(1850 + 500 * sinf(t * 0.17f + 1));
-  if ((int)t % 20 >= 14) p.lights = EL_HAZARD | ((millis() % 667) < 333 ? EL_IND_L | EL_IND_R : 0);
+  p.valid = EV_OIL_PSI | EV_OIL_TEMP | EV_CHT_L | EV_CHT_R | EV_RPM;
+  p.rpm = (uint16_t)rpm;
+  p.oilPsi10 = (int16_t)(10 * (14 + rpm / 110));
+  p.oilTemp10 = (int16_t)(1000 + 250 * sinf(t * 0.11f));
+  p.chtL10 = (int16_t)(10 * (150 + mph * 0.9f) + 150 * sinf(t * 0.21f));
+  p.chtR10 = (int16_t)(10 * (145 + mph * 0.85f) + 120 * sinf(t * 0.17f + 1));
+  bool flash = (millis() % 667) < 333;
+  if (u >= 36 && u < 41 && flash) p.lights = EL_IND_L;
+  if (u >= 53) p.lights = EL_HAZARD | (flash ? EL_IND_L | EL_IND_R : 0);
 }
 
 // every frame: the box's readings and lamps into the dash's state
@@ -368,8 +387,14 @@ void updateBox() {
   }
   live = boxHeardAt && millis() - boxHeardAt < ENGINE_LOST_MS;
   if (live) p = boxPkt;
-  else if (boxDemo) { demoBox(p); live = true; }
-  else p = {};
+  else if (boxDemo) {
+    demoBox(p);
+    live = true;
+    st.mph = demoMph;  // the speedo too, but no miles on the odometer
+    st.gpsOk = true;
+  } else {
+    p = {};
+  }
 
   auto get = [&](int16_t v, uint16_t bit) { return live && (p.valid & bit) ? v / 10.0f : NAN; };
   st.oilPsi = get(p.oilPsi10, EV_OIL_PSI);
@@ -630,7 +655,8 @@ void loopUpdateMode() {
 // ================================================================ serial
 // "odo 12873.4" sets the odometer to the car's own; "trip 0" zeroes the trip.
 // "unpair" forgets the engine box (the next one heard is taken); "demo"
-// turns made-up engine readings on or off while no box is heard.
+// turns a made-up drive on or off (all the needles and gauges) while no box
+// is heard.
 void handleSerial() {
   static char line[32];
   static int n = 0;
