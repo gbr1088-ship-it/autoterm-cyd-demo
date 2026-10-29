@@ -79,6 +79,8 @@
 #define LONG_PRESS_MS 2000    // hold this long to reset the trip
 #define SPLASH_MS    2500     // start-up logo
 #define SHOW_LAMP_CHECK 1     // 1: all lamps and a needle sweep after the logo
+#define LAMP_CHECK_WAIT_MS 3000  // the dash at rest before the sweep starts
+#define LAMP_CHECK_MS 3000    // the sweep to full scale and back
 
 // WiFi update: the dash's own network's password, also the PlatformIO
 // upload's. Set in platformio.ini ([lomax] update_password) so both match.

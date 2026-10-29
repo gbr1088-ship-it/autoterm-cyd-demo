@@ -540,15 +540,23 @@ void handleSerial() {
 
 // ================================================================ start-up
 // All the lamps on and the needles swept to full scale and back, like a
-// car's own bulb check.
+// car's own bulb check, after the dash has shown at rest for a moment.
 void lampCheck() {
+  frameBegin();
+  updateDash(st, 0, true);
+  frameEnd();
+  for (uint32_t t0 = millis(); millis() - t0 < LAMP_CHECK_WAIT_MS;) {
+    readGps();
+    delay(5);
+  }
   DashState t = st;
   t.indL = t.indR = t.beam = t.side = true;
   t.gpsOk = false;
-  const uint32_t T = 1400;
+  const uint32_t T = LAMP_CHECK_MS;
   uint32_t start = millis();
   for (uint32_t now = start; now - start < T; now = millis()) {
-    float k = sinf((float)(now - start) / T * 3.1416f);
+    // up and back, starting and stopping gently
+    float k = 0.5f - 0.5f * cosf((float)(now - start) / T * 2 * 3.1416f);
     t.mph = SPEEDO_MAX * k;
     t.rpm = TACHO_MAX * 1000 * k;
     frameBegin();
