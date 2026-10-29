@@ -16,6 +16,7 @@
 #include <math.h>
 #include "lomax_config.h"
 #include "lomax_fonts.h"
+#include "lomax_badge.h"  // the badge for the dial faces, made by tools/lomax_badge.py
 // the winged badge for the start-up screen, made by tools/lomax_logo.py and
 // tools/png2rgb565.py (see LOMAX.md); without it, a plain LOMAX badge is drawn
 #if defined(BOARD_ROUND) && __has_include("lomax_logo_round.h")
@@ -155,6 +156,32 @@ void text(Dial &d, const char *str, float x, float y, const uint8_t *font, uint1
   d.face->drawString(str, (int)roundf(x), (int)roundf(y));
 }
 
+// The Lomax badge, w px wide, centred on (cx, cy), laid over the face. Each
+// face pixel takes the average of the badge pixels it covers, so it stays
+// clean at any size.
+void badge(Dial &d, float cx, float cy, float w) {
+  float k = LOMAX_BADGE_W / w;  // badge pixels per face pixel
+  int W = (int)roundf(w), H = (int)roundf(LOMAX_BADGE_H / k);
+  int x0 = (int)roundf(cx - W / 2.0f), y0 = (int)roundf(cy - H / 2.0f);
+  for (int y = 0; y < H; y++) {
+    int sy0 = (int)(y * k), sy1 = max(sy0 + 1, min((int)((y + 1) * k), LOMAX_BADGE_H));
+    for (int x = 0; x < W; x++) {
+      int sx0 = (int)(x * k), sx1 = max(sx0 + 1, min((int)((x + 1) * k), LOMAX_BADGE_W));
+      uint32_t ga = 0, a = 0, n = 0;
+      for (int j = sy0; j < sy1; j++)
+        for (int i = sx0; i < sx1; i++) {
+          const uint8_t *p = lomax_badge + 2 * (j * LOMAX_BADGE_W + i);
+          ga += p[0] * p[1];
+          a += p[1];
+          n++;
+        }
+      if (!a) continue;
+      uint8_t g = ga / a;
+      d.face->drawPixel(x0 + x, y0 + y, mix(faceBase(d, x0 + x, y0 + y), rgb(g, g, g), a / (255.0f * n)));
+    }
+  }
+}
+
 // The 7" screen's dials are much bigger than the CYD's: larger type, and
 // lines scaled up with them (sk). The smaller dials keep their sizes.
 bool huge(const Dial &d) { return d.Rf > 130; }
@@ -270,7 +297,7 @@ void drawScale(Dial &d) {
     }
     text(d, "RPM", d.c, d.c - Rf * 0.34f, labelFont(d), C_INK);
     text(d, "x1000", d.c, d.c - Rf * 0.34f + (huge(d) ? 20 : d.big ? 14 : 11), smallFont(d), C_INK);
-    text(d, "LOMAX", d.c, d.c + Rf * 0.42f, labelFont(d), shade(C_FACE_EDGE, 0.55f));
+    badge(d, d.c, d.c + Rf * 0.45f, Rf * 0.8f);
   }
 }
 
@@ -370,7 +397,7 @@ void drawClockFace(Dial &d) {
     Roman rn{&d, i * 30.0f, r0 - h * 0.8f, h, h * 0.08f, h * 0.035f};
     rn.draw(num[i]);
   }
-  text(d, "LOMAX", d.c, d.c - Rf * 0.36f, smallFont(d), C_INK);
+  badge(d, d.c, d.c - Rf * 0.36f, Rf * 0.8f);
 }
 
 void buildFace(Dial &d) {

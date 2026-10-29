@@ -215,9 +215,15 @@ python tools/png2rgb565.py assets/lomax_logo.png --max 300 200 --bg 0x0841 --nam
 python tools/png2rgb565.py assets/lomax_logo.png --max 220 160 --bg 0x0841 --name lomax_logo --out src/lomax_logo_round.h
 python tools/png2rgb565.py assets/lomax_logo.png --max 520 300 --grow --bg 0x0841 --name lomax_logo --out src/lomax_logo7.h
 ```
+The rev counter and the clock carry a small copy of the badge on their
+faces, made from the same picture with its see-through edges kept, so it
+sits cleanly on the cream face at any size:
+```
+python tools/lomax_badge.py
+```
 For a sharper badge, replace `assets/lomax_logo.png` with a clean scan or
-vector export of the artwork (transparent background) and run the last three
-lines. Without those headers, the dash falls back to a plain LOMAX enamel
+vector export of the artwork (transparent background) and run the lines
+above again. Without those headers, the dash falls back to a plain LOMAX enamel
 badge.
 
 ## Settings (`src/lomax_config.h`)
